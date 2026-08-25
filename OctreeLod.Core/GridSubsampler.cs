@@ -36,16 +36,8 @@ public static class GridSubsampler
 
             if (!cells.TryGetValue(key, out var cell))
             {
-                cells[key] = new Cell
-                {
-                    BestPoint = p,
-                    BestDistSq = distSq,
-                    ColorSumR = p.R,
-                    ColorSumG = p.G,
-                    ColorSumB = p.B,
-                    Count = 1,
-                };
-                continue;
+                cell = new Cell { BestPoint = p, BestDistSq = distSq, Count = 0 };
+                cells[key] = cell;
             }
 
             cell.Count++;
@@ -57,7 +49,6 @@ public static class GridSubsampler
                 cell.BestDistSq = distSq;
                 cell.BestPoint = p;
             }
-            cells[key] = cell;
         }
 
         var result = new PointRecord[cells.Count];
@@ -72,7 +63,7 @@ public static class GridSubsampler
         return result;
     }
 
-    private struct Cell
+    private sealed class Cell
     {
         public PointRecord BestPoint;
         public double BestDistSq;

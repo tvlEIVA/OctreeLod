@@ -61,7 +61,7 @@ public class EndToEndTests : IDisposable
         int nonEmptyChildren = 0;
         for (int octant = 0; octant < 8; octant++)
         {
-            long childId = logicalRoot.GetChild(octant);
+            long childId = logicalRoot.Children[octant];
             if (childId == NodeRecord.NoneId) continue;
             var child = metadata.Get(childId);
             if (!(child.IsLeaf && child.PointCount == 0)) nonEmptyChildren++;
@@ -122,7 +122,7 @@ public class EndToEndTests : IDisposable
         if (node.IsLeaf) { onLeaf(nodeId); return; }
         for (int octant = 0; octant < 8; octant++)
         {
-            long childId = node.GetChild(octant);
+            long childId = node.Children[octant];
             if (childId != NodeRecord.NoneId) WalkLeaves(metadata, childId, onLeaf);
         }
     }

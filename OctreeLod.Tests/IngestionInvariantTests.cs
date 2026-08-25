@@ -71,7 +71,7 @@ public class IngestionInvariantTests : IDisposable
             if (node.IsLeaf) return;
             for (int octant = 0; octant < 8; octant++)
             {
-                long childId = node.GetChild(octant);
+                long childId = node.Children[octant];
                 var child = metadata.Get(childId);
                 Assert.True(child.Bbox.MinX >= node.Bbox.MinX && child.Bbox.MinX + child.Bbox.Size <= node.Bbox.MinX + node.Bbox.Size);
                 Assert.True(child.Bbox.MinY >= node.Bbox.MinY && child.Bbox.MinY + child.Bbox.Size <= node.Bbox.MinY + node.Bbox.Size);
@@ -166,7 +166,7 @@ public class IngestionInvariantTests : IDisposable
         if (node.IsLeaf) return;
         for (int octant = 0; octant < 8; octant++)
         {
-            long childId = node.GetChild(octant);
+            long childId = node.Children[octant];
             if (childId != NodeRecord.NoneId) WalkAll(metadata, childId, onNode);
         }
     }

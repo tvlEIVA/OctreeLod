@@ -67,7 +67,7 @@ public class AdaptiveRootTrimmerTests
         int nonEmpty = 0;
         for (int i = 0; i < 8; i++)
         {
-            long childId = resultNode.GetChild(i);
+            long childId = resultNode.Children[i];
             if (childId == NodeRecord.NoneId) continue;
             var child = metadata.Get(childId);
             if (!(child.IsLeaf && child.PointCount == 0)) nonEmpty++;
@@ -100,7 +100,7 @@ public class AdaptiveRootTrimmerTests
             long pointCount = System.Array.IndexOf(nonEmptyOctants, octant) >= 0 ? 10 : 0;
             long childId = AllocateLeaf(metadata, nodeId, octant, bbox.ChildBounds(octant), pointCount);
             var updated = metadata.Get(nodeId);
-            updated.SetChild(octant, childId);
+            updated.Children[octant] = childId;
             metadata.Set(nodeId, updated);
         }
         return nodeId;
@@ -128,7 +128,7 @@ public class AdaptiveRootTrimmerTests
                 childId = AllocateLeaf(metadata, nodeId, octant, bbox.ChildBounds(octant), pointCount: 0);
             }
             var updated = metadata.Get(nodeId);
-            updated.SetChild(octant, childId);
+            updated.Children[octant] = childId;
             metadata.Set(nodeId, updated);
         }
         return nodeId;

@@ -20,7 +20,7 @@ public class SplitCascadeTests : IDisposable
         var root = metadata.Get(engine.RootId);
         Assert.False(root.IsLeaf);
         for (int octant = 0; octant < 8; octant++)
-            Assert.NotEqual(NodeRecord.NoneId, root.GetChild(octant));
+            Assert.NotEqual(NodeRecord.NoneId, root.Children[octant]);
     }
 
     [Fact]
@@ -139,7 +139,7 @@ public class SplitCascadeTests : IDisposable
         }
         for (int octant = 0; octant < 8; octant++)
         {
-            long childId = node.GetChild(octant);
+            long childId = node.Children[octant];
             if (childId != NodeRecord.NoneId) WalkLeaves(metadata, childId, onLeaf);
         }
     }

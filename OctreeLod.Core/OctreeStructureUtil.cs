@@ -16,7 +16,7 @@ public static class OctreeStructureUtil
         var result = new List<long>();
         for (int octant = 0; octant < 8; octant++)
         {
-            long childId = node.GetChild(octant);
+            long childId = node.Children[octant];
             if (childId == NodeRecord.NoneId) continue;
 
             var child = metadata.Get(childId);
