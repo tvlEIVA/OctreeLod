@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using OctreeLod.Core.Ingest;
+using OctreeLod.Core.Model;
 
-namespace OctreeLod.Core;
+namespace OctreeLod.Core.Merge;
 
 // Phase-2 orchestrator: bottom-up, post-order, parallel across sibling
 // subtrees (bounded concurrency). Each node's merge reads only its direct

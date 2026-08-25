@@ -2,8 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using OctreeLod.Core.Model;
 
-namespace OctreeLod.Core;
+namespace OctreeLod.Core.Ingest;
 
 // Default leaf-buffer store. One growable file divided into fixed-size
 // slots (one slot = one leaf's buffer, sized for exactly `slotCapacityPoints`

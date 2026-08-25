@@ -1,4 +1,6 @@
-namespace OctreeLod.Core;
+using OctreeLod.Core.Model;
+
+namespace OctreeLod.Core.Merge;
 
 // Phase-2 representative point sets: one bulk write per node, written
 // exactly once, size varies per node (not bounded to a fixed slot like leaf

@@ -1,7 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
-using OctreeLod.App;
+using OctreeLod.App.Sources;
 
 namespace OctreeLod.Tests;
 

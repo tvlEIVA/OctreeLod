@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
-using OctreeLod.Core;
+using OctreeLod.Core.Merge;
+using OctreeLod.Core.Model;
 
 namespace OctreeLod.Tests;
 

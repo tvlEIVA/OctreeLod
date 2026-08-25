@@ -11,11 +11,24 @@ pass builds a level-of-detail pyramid, which is then exported as a
 ## Project layout
 
 - **`OctreeLod.Core`** (netstandard2.0 — usable from a .NET Framework 4.7.3
-  host) — all algorithm logic: ingestion, splitting, merging, grid
-  subsampling, 3D Tiles export. No format-specific I/O beyond what's needed
-  for its own on-disk scratch storage.
-- **`OctreeLod.App`** (net8.0) — console entry point. Reads a text point
-  cloud file, runs both phases, exports the tileset.
+  host) — all algorithm logic, organized by pipeline stage. Dependencies flow
+  one way: `Model` → `Ingest` → `Merge` → `Export`; each stage only ever
+  references the ones before it.
+  - **`Model/`** — phase-agnostic types shared across all three stages:
+    `PointRecord`, `BoundingCube`, `NodeRecord`, `StorageLocator`, the
+    metadata store, and `OctreeStructureUtil` (the shared
+    "is this child empty" rule).
+  - **`Ingest/`** — phase 1: `OctreeIngestionEngine` (streaming split
+    cascade), `SlabPointStore` (on-disk leaf buffers), ingest options.
+  - **`Merge/`** — phase 2: `MergeEngine`, `GridSubsampler`,
+    `AdaptiveRootTrimmer`, and the merged-point output store. Reads leaf data
+    via `Ingest`'s `IPointBufferStore`.
+  - **`Export/`** — `Tiles3DExporter`, `PntsWriter`, `MinimalJsonWriter`.
+    Reads representative point sets via `Merge`'s `IMergedPointStore`.
+- **`OctreeLod.App`** (net8.0) — console entry point. Runs all three stages;
+  input-format-specific reading lives in its own `Sources/` folder
+  (`IPointBatchSource` + `TextPointCloudBatchSource`) so a different file
+  format is a new class there, not a change to the pipeline.
 - **`OctreeLod.Tests`** (net8.0, xUnit) — unit + end-to-end tests.
 
 ## How it works
@@ -63,7 +76,7 @@ Edit the constants at the top of `OctreeLod.App/Program.cs`:
 
 ```csharp
 private const string InputPath = @"D:\Data\your_file.xyz";
-private const int BatchSize = 500;
+private const int BatchSize = 1500;
 ```
 
 Then:

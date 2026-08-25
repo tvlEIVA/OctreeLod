@@ -2,7 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using OctreeLod.Core;
+using OctreeLod.Core.Ingest;
+using OctreeLod.Core.Model;
 
 namespace OctreeLod.Tests;
 

@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 
-namespace OctreeLod.Core;
+namespace OctreeLod.Core.Export;
 
 // Minimal recursive JSON writer scoped to tileset.json's known, fixed shape
 // (objects, arrays, numbers, strings, bools) — deliberately not a

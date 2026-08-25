@@ -1,4 +1,4 @@
-namespace OctreeLod.Core;
+namespace OctreeLod.Core.Model;
 
 public readonly struct BoundingCube
 {

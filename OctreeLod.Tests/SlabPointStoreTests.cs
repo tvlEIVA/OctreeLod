@@ -1,6 +1,7 @@
 using System;
 using System.IO;
-using OctreeLod.Core;
+using OctreeLod.Core.Ingest;
+using OctreeLod.Core.Model;
 
 namespace OctreeLod.Tests;
 

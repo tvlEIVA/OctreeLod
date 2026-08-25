@@ -1,7 +1,8 @@
 using System;
 using System.IO;
+using OctreeLod.Core.Model;
 
-namespace OctreeLod.Core;
+namespace OctreeLod.Core.Merge;
 
 public sealed class MergedPointFileStore : IMergedPointStore
 {

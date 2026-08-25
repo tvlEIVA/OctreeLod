@@ -1,4 +1,5 @@
-using OctreeLod.Core;
+using OctreeLod.Core.Merge;
+using OctreeLod.Core.Model;
 
 namespace OctreeLod.Tests;
 

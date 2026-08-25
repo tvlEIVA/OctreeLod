@@ -1,4 +1,6 @@
-namespace OctreeLod.Core;
+using OctreeLod.Core.Model;
+
+namespace OctreeLod.Core.Merge;
 
 public static class AdaptiveRootTrimmer
 {

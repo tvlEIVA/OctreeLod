@@ -1,4 +1,4 @@
-namespace OctreeLod.Core;
+namespace OctreeLod.Core.Model;
 
 // All node metadata access is routed through this interface (never a
 // concrete array/list reached into directly from engine code) so a future

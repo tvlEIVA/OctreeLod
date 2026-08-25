@@ -1,6 +1,7 @@
 using System;
+using OctreeLod.Core.Model;
 
-namespace OctreeLod.Core;
+namespace OctreeLod.Core.Ingest;
 
 public sealed class OctreeIngestionOptions
 {

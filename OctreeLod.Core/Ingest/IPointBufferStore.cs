@@ -1,4 +1,6 @@
-namespace OctreeLod.Core;
+using OctreeLod.Core.Model;
+
+namespace OctreeLod.Core.Ingest;
 
 // Leaf ingest buffers: incremental single-point appends into a slot reserved
 // up front, freed when the leaf splits. Separate from IMergedPointStore

@@ -1,4 +1,6 @@
-namespace OctreeLod.Core;
+using OctreeLod.Core.Model;
+
+namespace OctreeLod.Core.Ingest;
 
 internal static class NodeDepthUtil
 {

@@ -1,7 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using OctreeLod.Core;
+using OctreeLod.App.Sources;
+using OctreeLod.Core.Export;
+using OctreeLod.Core.Ingest;
+using OctreeLod.Core.Merge;
+using OctreeLod.Core.Model;
 
 namespace OctreeLod.App;
 

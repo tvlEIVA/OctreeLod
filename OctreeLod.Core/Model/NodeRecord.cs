@@ -1,4 +1,4 @@
-namespace OctreeLod.Core;
+namespace OctreeLod.Core.Model;
 
 // Opaque-ID metadata record. Deliberately NOT path-encoded by tree position
 // (parent/children reference each other by stable id) so that structural

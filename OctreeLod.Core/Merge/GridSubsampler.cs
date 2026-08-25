@@ -1,6 +1,7 @@
 using System.Collections.Generic;
+using OctreeLod.Core.Model;
 
-namespace OctreeLod.Core;
+namespace OctreeLod.Core.Merge;
 
 public static class GridSubsampler
 {

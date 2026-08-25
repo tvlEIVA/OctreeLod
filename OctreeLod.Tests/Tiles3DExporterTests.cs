@@ -3,7 +3,10 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
-using OctreeLod.Core;
+using OctreeLod.Core.Export;
+using OctreeLod.Core.Ingest;
+using OctreeLod.Core.Merge;
+using OctreeLod.Core.Model;
 
 namespace OctreeLod.Tests;
 

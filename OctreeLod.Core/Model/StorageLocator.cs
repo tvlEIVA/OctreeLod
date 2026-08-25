@@ -1,4 +1,4 @@
-namespace OctreeLod.Core;
+namespace OctreeLod.Core.Model;
 
 // Opaque handle into whichever IPointBufferStore issued it. Field meaning is
 // store-specific (e.g. segment+slot for the slab store, or a node id tucked

@@ -1,7 +1,8 @@
 using System;
 using System.IO;
 using System.Text;
-using OctreeLod.Core;
+using OctreeLod.Core.Export;
+using OctreeLod.Core.Model;
 
 namespace OctreeLod.Tests;
 

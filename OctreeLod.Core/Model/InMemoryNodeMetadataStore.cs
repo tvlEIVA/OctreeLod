@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace OctreeLod.Core;
+namespace OctreeLod.Core.Model;
 
 // Flat struct list indexed by id. At ~125-140 bytes/record this stays
 // resident even at billions-of-points scale (see design notes) — no

@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace OctreeLod.Core;
+namespace OctreeLod.Core.Model;
 
 // Shared structural helper used by AdaptiveRootTrimmer, MergeEngine, and
 // Tiles3DExporter, so the "is this child empty" rule lives in exactly one

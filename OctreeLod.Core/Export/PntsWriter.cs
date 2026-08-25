@@ -1,7 +1,8 @@
 using System.IO;
 using System.Text;
+using OctreeLod.Core.Model;
 
-namespace OctreeLod.Core;
+namespace OctreeLod.Core.Export;
 
 // Legacy 3D Tiles Point Cloud (.pnts) writer. Binary layout verified against
 // CesiumGS/3d-tiles/specification/TileFormats/PointCloud/README.adoc:

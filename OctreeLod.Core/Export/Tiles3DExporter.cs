@@ -1,8 +1,10 @@
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using OctreeLod.Core.Merge;
+using OctreeLod.Core.Model;
 
-namespace OctreeLod.Core;
+namespace OctreeLod.Core.Export;
 
 // Exports the built + merged octree (phases 1-2) as a 3D Tiles dataset:
 // tileset.json + one legacy .pnts file per emitted node under content/.
