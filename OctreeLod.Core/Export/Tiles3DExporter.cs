@@ -18,12 +18,21 @@ public static class Tiles3DExporter
         IMergedPointStore mergedStore,
         long rootId,
         int gridDivisions,
-        string outputDirectory)
+        string outputDirectory,
+        GeoReference? geoReference = null)
     {
         string contentDir = Path.Combine(outputDirectory, "content");
         Directory.CreateDirectory(contentDir);
 
         var rootTile = BuildTile(metadata, mergedStore, rootId, gridDivisions, contentDir, isRoot: true);
+
+        if (geoReference.HasValue)
+        {
+            var matrix = EcefTransform.ComputeLocalToEcefMatrix(geoReference.Value);
+            var matrixJson = new List<object>(matrix.Length);
+            foreach (var v in matrix) matrixJson.Add(v);
+            rootTile.Json["transform"] = matrixJson;
+        }
 
         var tileset = new Dictionary<string, object>
         {

@@ -11,7 +11,7 @@ namespace OctreeLod.App;
 
 public static class Program
 {
-    private const string InputPath = @"D:\Data\full_laser_9_2_8_(WithHeader).xyz";
+    private const string InputPath = @"D:\Data\landscape4875 3.xyz";
     private const int BatchSize = 1500;
 
     public static async System.Threading.Tasks.Task Main()
@@ -31,7 +31,9 @@ public static class Program
         var engine = new OctreeIngestionEngine(metadata, leafStore, options);
 
         Console.WriteLine($"Reading points from: {InputPath}");
-        var batches = new TextPointCloudBatchSource(InputPath, BatchSize).ReadBatches();
+        var source = new LatLonPointCloudBatchSource(InputPath, BatchSize);
+        Console.WriteLine($"Centroid (reference point): lat={source.Reference.LatitudeDegrees:F6} lon={source.Reference.LongitudeDegrees:F6}");
+        var batches = source.ReadBatches();
 
         Console.WriteLine("Phase 1: streaming ingest...");
         long totalPoints = 0;
@@ -67,7 +69,7 @@ public static class Program
 
         Console.WriteLine("Exporting 3D Tiles dataset...");
         string tilesDir = Path.Combine(workDir, "3dtiles");
-        Tiles3DExporter.Export(metadata, mergedStore, logicalRootId, gridDivisions: 64, tilesDir);
+        Tiles3DExporter.Export(metadata, mergedStore, logicalRootId, gridDivisions: 64, tilesDir, source.Reference);
         Console.WriteLine($"3D Tiles dataset written to: {tilesDir}");
     }
 }

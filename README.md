@@ -27,8 +27,11 @@ pass builds a level-of-detail pyramid, which is then exported as a
     Reads representative point sets via `Merge`'s `IMergedPointStore`.
 - **`OctreeLod.App`** (net8.0) — console entry point. Runs all three stages;
   input-format-specific reading lives in its own `Sources/` folder
-  (`IPointBatchSource` + `TextPointCloudBatchSource`) so a different file
-  format is a new class there, not a change to the pipeline.
+  (`IPointBatchSource` implementations) so a different file format is a new
+  class there, not a change to the pipeline. Two so far:
+  `TextPointCloudBatchSource` (already-Cartesian easting/northing/depth) and
+  `LatLonPointCloudBatchSource` (geodetic lon/lat/height, auto-converted to
+  local ENU meters — see Input formats below).
 - **`OctreeLod.Tests`** (net8.0, xUnit) — unit + end-to-end tests.
 
 ## How it works
@@ -55,11 +58,23 @@ dozens of near-empty wrapper levels.
 plus a `tileset.json` describing the hierarchy (`box` bounding volumes,
 `ADD` refinement, `geometricError` derived from grid cell size). Each
 `.pnts` stores positions as `RTC_CENTER`-relative float32 offsets, so
-precision holds up even far from the coordinate origin.
+precision holds up even far from the coordinate origin. Optionally pass a
+`GeoReference` (lat/lon/height) to `Tiles3DExporter.Export` to anchor the
+local East/North/Up frame to a real spot on the WGS84 ellipsoid — this
+writes a root `transform` (local → ECEF) so 3D Tiles viewers (Cesium,
+deck.gl) place the dataset on the globe instead of defaulting to
+ECEF-interpreted raw local coordinates, which for typical local-frame
+magnitudes lands the whole dataset a few hundred km from Earth's center —
+nowhere near the surface. The ingestion/merge pipeline itself stays
+coordinate-agnostic (still just X/Y/Z meters); georeferencing is purely an
+export-time concern.
 
-## Input format
+## Input formats
 
-Whitespace-delimited text with a header row:
+Both are whitespace-delimited text, RGB in columns 4-6, normals (columns
+7-9, ignored) optional.
+
+**Already-Cartesian** (`TextPointCloudBatchSource`), header row required:
 
 ```
 easting northing depth red green blue nx ny nz
@@ -67,8 +82,25 @@ easting northing depth red green blue nx ny nz
 ...
 ```
 
-`easting/northing/depth` → X/Y/Z, `red/green/blue` → color. Normals
-(`nx/ny/nz`) are read but ignored. See `TextPointCloudBatchSource`.
+`easting/northing/depth` map straight to X/Y/Z.
+
+**Geodetic** (`LatLonPointCloudBatchSource`), header row optional
+(`hasHeader` constructor flag):
+
+```
+lon lat height red green blue nx ny nz
+10.000000 58.000000 0 255 100 255 0 0 0
+...
+```
+
+Streams the file twice: once (O(1) memory — just two running sums) to
+compute the mean lon/lat as a centroid, then again to convert every point to
+local East/North/Up meters around that centroid — so the rest of the
+pipeline works in ordinary Cartesian meters as usual. `source.Reference`
+exposes the computed centroid; pass it straight to
+`Tiles3DExporter.Export(..., source.Reference)` so the tileset gets a root
+`transform` placing it back at the correct real-world location (see
+Georeferencing below).
 
 ## Running
 
@@ -105,7 +137,16 @@ dotnet test OctreeLod.Tests/OctreeLod.Tests.csproj
 
 ## Known limitations / not yet built
 
-- No georeferencing — tileset is plain local Cartesian, no root transform.
+- Georeferencing (`GeoReference` → root `transform`) is opt-in — only wired
+  up automatically for `LatLonPointCloudBatchSource` input. If ingesting
+  already-Cartesian data (`TextPointCloudBatchSource`) that's also secretly
+  geodetic in origin, the caller is responsible for supplying a matching
+  `GeoReference` by hand; the pipeline has no way to infer one.
+- `LatLonPointCloudBatchSource`'s ENU conversion is a flat-earth
+  approximation around one centroid — fine for a dataset a few hundred km
+  across, increasingly distorted at continental scale (should switch to
+  per-point ECEF conversion, or tile-local reference points, if that's ever
+  needed).
 - `leaves.bin` and the `merged/` folder are scratch space for phases 1-2;
   nothing downstream reads them again once the 3D Tiles export has run, so
   they're safe to delete.
