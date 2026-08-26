@@ -2,8 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using OctreeLod.Core.Ingest;
 using OctreeLod.Core.Model;
+using OctreeLod.Core.SplitMergeEngine.Ingest;
 
 namespace OctreeLod.Tests;
 

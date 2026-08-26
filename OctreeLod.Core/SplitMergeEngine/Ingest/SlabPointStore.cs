@@ -4,7 +4,7 @@ using System.IO;
 using System.Text;
 using OctreeLod.Core.Model;
 
-namespace OctreeLod.Core.Ingest;
+namespace OctreeLod.Core.SplitMergeEngine.Ingest;
 
 // Default leaf-buffer store. One growable file divided into fixed-size
 // slots (one slot = one leaf's buffer, sized for exactly `slotCapacityPoints`

@@ -1,7 +1,7 @@
 using System;
 using OctreeLod.Core.Model;
 
-namespace OctreeLod.Core.Ingest;
+namespace OctreeLod.Core.SplitMergeEngine.Ingest;
 
 public sealed class OctreeIngestionOptions
 {

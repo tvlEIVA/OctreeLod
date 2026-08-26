@@ -4,9 +4,9 @@ using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
 using OctreeLod.Core.Export;
-using OctreeLod.Core.Ingest;
-using OctreeLod.Core.Merge;
 using OctreeLod.Core.Model;
+using OctreeLod.Core.SplitMergeEngine.Ingest;
+using OctreeLod.Core.SplitMergeEngine.Merge;
 
 namespace OctreeLod.Tests;
 
@@ -27,14 +27,14 @@ public class Tiles3DExporterTests : IDisposable
         var random = new Random(21);
         engine.IngestBatch(MakeTwoClusterDataset(random));
 
-        var mergedStore = new MergedPointFileStore(Path.Combine(_dir, "merged"));
+        using var mergedStore = new NodePointFileStore(Path.Combine(_dir, "merged"));
         var mergeEngine = new MergeEngine(metadata, leafStore, mergedStore, gridDivisions, maxDegreeOfParallelism: 4);
         await mergeEngine.MergeAsync(engine.RootId);
 
         long logicalRootId = AdaptiveRootTrimmer.TrimToLogicalRoot(metadata, engine.RootId);
 
         string outputDir = Path.Combine(_dir, "tiles-out");
-        Tiles3DExporter.Export(metadata, mergedStore, logicalRootId, gridDivisions, outputDir);
+        Tiles3DExporter.Export(metadata, mergedStore, logicalRootId, gridDivisions, outputDir, TileRefine.Replace);
 
         string tilesetPath = Path.Combine(outputDir, "tileset.json");
         Assert.True(File.Exists(tilesetPath));
@@ -44,7 +44,7 @@ public class Tiles3DExporterTests : IDisposable
 
         Assert.Equal("1.0", root.GetProperty("asset").GetProperty("version").GetString());
         var rootTile = root.GetProperty("root");
-        Assert.Equal("ADD", rootTile.GetProperty("refine").GetString());
+        Assert.Equal("REPLACE", rootTile.GetProperty("refine").GetString());
 
         int visitedTiles = 0;
         double parentGeometricError = double.PositiveInfinity;
@@ -67,7 +67,7 @@ public class Tiles3DExporterTests : IDisposable
             points.Add(new PointRecord(random.NextDouble(), random.NextDouble(), random.NextDouble(), 1, 2, 3));
         engine.IngestBatch(points);
 
-        var mergedStore = new MergedPointFileStore(Path.Combine(_dir, "merged2"));
+        using var mergedStore = new NodePointFileStore(Path.Combine(_dir, "merged2"));
 
         long logicalRootId = AdaptiveRootTrimmer.TrimToLogicalRoot(metadata, engine.RootId);
         var logicalRoot = metadata.Get(logicalRootId);
@@ -76,7 +76,7 @@ public class Tiles3DExporterTests : IDisposable
         mergedStore.WriteAll(logicalRootId, leafStore.ReadAll(logicalRoot.Storage, (int)logicalRoot.PointCount));
 
         string outputDir = Path.Combine(_dir, "tiles-out2");
-        Tiles3DExporter.Export(metadata, mergedStore, logicalRootId, gridDivisions: 16, outputDir);
+        Tiles3DExporter.Export(metadata, mergedStore, logicalRootId, gridDivisions: 16, outputDir, TileRefine.Replace);
 
         using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(outputDir, "tileset.json")));
         var rootTile = doc.RootElement.GetProperty("root");

@@ -3,9 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using OctreeLod.Core.Ingest;
-using OctreeLod.Core.Merge;
 using OctreeLod.Core.Model;
+using OctreeLod.Core.SplitMergeEngine.Ingest;
+using OctreeLod.Core.SplitMergeEngine.Merge;
 
 namespace OctreeLod.Tests;
 
@@ -49,7 +49,7 @@ public class EndToEndTests : IDisposable
         Assert.Equal(allPoints.Count, totalStored);
 
         // Phase 2.
-        var mergedStore = new MergedPointFileStore(Path.Combine(_dir, "merged"));
+        using var mergedStore = new NodePointFileStore(Path.Combine(_dir, "merged"));
         var mergeEngine = new MergeEngine(metadata, leafStore, mergedStore, gridDivisions: 32, maxDegreeOfParallelism: 4);
         await mergeEngine.MergeAsync(engine.RootId);
 

@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using OctreeLod.Core.Model;
 
-namespace OctreeLod.Core.Ingest;
+namespace OctreeLod.Core.SplitMergeEngine.Ingest;
 
 // Phase-1 orchestrator: streaming ingest into a fixed-bounds octree, never
 // holding more than one leaf's worth of points (~SplitThreshold) in memory

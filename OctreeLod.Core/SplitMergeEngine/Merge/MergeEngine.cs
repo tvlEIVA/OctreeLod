@@ -3,10 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using OctreeLod.Core.Ingest;
 using OctreeLod.Core.Model;
+using OctreeLod.Core.SplitMergeEngine.Ingest;
 
-namespace OctreeLod.Core.Merge;
+namespace OctreeLod.Core.SplitMergeEngine.Merge;
 
 // Phase-2 orchestrator: bottom-up, post-order, parallel across sibling
 // subtrees (bounded concurrency). Each node's merge reads only its direct
@@ -26,14 +26,14 @@ public sealed class MergeEngine
 {
     private readonly INodeMetadataStore _metadata;
     private readonly IPointBufferStore _leafStore;
-    private readonly IMergedPointStore _mergedStore;
+    private readonly INodePointStore _mergedStore;
     private readonly int _gridDivisions;
     private readonly SemaphoreSlim _concurrencyLimiter;
 
     public MergeEngine(
         INodeMetadataStore metadata,
         IPointBufferStore leafStore,
-        IMergedPointStore mergedStore,
+        INodePointStore mergedStore,
         int gridDivisions,
         int maxDegreeOfParallelism)
     {

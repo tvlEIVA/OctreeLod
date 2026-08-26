@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading.Tasks;
 using OctreeLod.App.Sources;
 using OctreeLod.Core.Export;
-using OctreeLod.Core.Ingest;
-using OctreeLod.Core.Merge;
 using OctreeLod.Core.Model;
+using OctreeLod.Core.SpacingEngine;
+using OctreeLod.Core.SplitMergeEngine.Ingest;
+using OctreeLod.Core.SplitMergeEngine.Merge;
 
 namespace OctreeLod.App;
 
@@ -14,12 +16,51 @@ public static class Program
     private const string InputPath = @"D:\Data\landscape4875 3.xyz";
     private const int BatchSize = 1500;
 
-    public static async System.Threading.Tasks.Task Main()
+    // Toggle input source: true = geodetic lon/lat input, converted to local
+    // ENU meters (LatLonPointCloudBatchSource, header row optional — set
+    // LatLonHasHeader below). false = already-Cartesian easting/northing/depth
+    // input, header row required (TextPointCloudBatchSource). Both take the
+    // same InputPath/BatchSize above.
+    private const bool UseLatLonSource = true;
+    private const bool LatLonHasHeader = true;
+
+    // Toggle between the legacy split+merge pipeline (OctreeIngestionEngine
+    // + MergeEngine) and the spacing-based single-pass engine
+    // (SpacingIngestionEngine) — see README "How it works" for the
+    // difference.
+    private const bool UseSpacingEngine = true;
+
+    public static async Task Main()
     {
         string workDir = Path.Combine(Path.GetTempPath(), "OctreeLodDemo-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(workDir);
         Console.WriteLine($"Working directory: {workDir}");
 
+        Console.WriteLine($"Reading points from: {InputPath}");
+
+        IPointBatchSource source;
+        GeoReference? reference = null;
+        if (UseLatLonSource)
+        {
+            var latLonSource = new LatLonPointCloudBatchSource(InputPath, BatchSize, LatLonHasHeader);
+            Console.WriteLine($"Centroid (reference point): lat={latLonSource.Reference.LatitudeDegrees:F6} lon={latLonSource.Reference.LongitudeDegrees:F6}");
+            reference = latLonSource.Reference;
+            source = latLonSource;
+        }
+        else
+        {
+            source = new TextPointCloudBatchSource(InputPath, BatchSize);
+        }
+        var batches = source.ReadBatches();
+
+        if (UseSpacingEngine)
+            await RunSpacingEngineAsync(workDir, reference, batches);
+        else
+            await RunLegacyPipelineAsync(workDir, reference, batches);
+    }
+
+    private static async Task RunLegacyPipelineAsync(string workDir, GeoReference? reference, IEnumerable<IReadOnlyList<PointRecord>> batches)
+    {
         var options = new OctreeIngestionOptions
         {
             SplitThreshold = 1000,
@@ -29,11 +70,6 @@ public static class Program
         var metadata = new InMemoryNodeMetadataStore();
         using var leafStore = new SlabPointStore(Path.Combine(workDir, "leaves.bin"), options.SplitThreshold);
         var engine = new OctreeIngestionEngine(metadata, leafStore, options);
-
-        Console.WriteLine($"Reading points from: {InputPath}");
-        var source = new LatLonPointCloudBatchSource(InputPath, BatchSize);
-        Console.WriteLine($"Centroid (reference point): lat={source.Reference.LatitudeDegrees:F6} lon={source.Reference.LongitudeDegrees:F6}");
-        var batches = source.ReadBatches();
 
         Console.WriteLine("Phase 1: streaming ingest...");
         long totalPoints = 0;
@@ -55,7 +91,7 @@ public static class Program
         Console.WriteLine($"Ingested {totalPoints:N0} points into {metadata.Count:N0} nodes in {stopwatch.Elapsed:hh\\:mm\\:ss}.");
 
         Console.WriteLine("Phase 2: bottom-up merge...");
-        var mergedStore = new MergedPointFileStore(Path.Combine(workDir, "merged"));
+        using var mergedStore = new NodePointFileStore(Path.Combine(workDir, "merged"));
         var mergeEngine = new MergeEngine(metadata, leafStore, mergedStore, gridDivisions: 64, maxDegreeOfParallelism: Environment.ProcessorCount);
         await mergeEngine.MergeAsync(engine.RootId);
 
@@ -69,7 +105,55 @@ public static class Program
 
         Console.WriteLine("Exporting 3D Tiles dataset...");
         string tilesDir = Path.Combine(workDir, "3dtiles");
-        Tiles3DExporter.Export(metadata, mergedStore, logicalRootId, gridDivisions: 64, tilesDir, source.Reference);
+        Tiles3DExporter.Export(metadata, mergedStore, logicalRootId, gridDivisions: 64, tilesDir, TileRefine.Replace, reference);
         Console.WriteLine($"3D Tiles dataset written to: {tilesDir}");
+    }
+
+    private static Task RunSpacingEngineAsync(string workDir, GeoReference? reference, IEnumerable<IReadOnlyList<PointRecord>> batches)
+    {
+        var options = new SpacingIngestionOptions
+        {
+            OnWarning = msg => Console.WriteLine($"[warn] {msg}"),
+        };
+
+        var metadata = new InMemoryNodeMetadataStore();
+        using var nodeStore = new NodePointFileStore(Path.Combine(workDir, "nodes"));
+        var engine = new SpacingIngestionEngine(metadata, nodeStore, options);
+
+        Console.WriteLine($"Spacing engine: single-pass streaming ingest (LOD decided at insertion, no merge phase, max {options.MaxResidentNodes:N0} nodes resident in RAM)...");
+        long totalPoints = 0;
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        long lastReportMs = 0;
+        foreach (var batch in batches)
+        {
+            engine.IngestBatch(batch);
+            totalPoints += batch.Count;
+
+            if (stopwatch.ElapsedMilliseconds - lastReportMs >= 500)
+            {
+                double rate = totalPoints / stopwatch.Elapsed.TotalSeconds;
+                Console.Write($"\r  {totalPoints:N0} points | {metadata.Count:N0} nodes | {rate:N0} pts/sec | {stopwatch.Elapsed:hh\\:mm\\:ss}   ");
+                lastReportMs = stopwatch.ElapsedMilliseconds;
+            }
+        }
+        Console.WriteLine();
+        Console.WriteLine($"Ingested {totalPoints:N0} points into {metadata.Count:N0} nodes in {stopwatch.Elapsed:hh\\:mm\\:ss}.");
+
+        engine.Flush();
+
+        long logicalRootId = AdaptiveRootTrimmer.TrimToLogicalRoot(metadata, engine.RootId);
+        var logicalRoot = metadata.Get(logicalRootId);
+        var rootPoints = nodeStore.ReadAll(logicalRootId);
+
+        Console.WriteLine($"True geometric root id: {engine.RootId}");
+        Console.WriteLine($"Logical (emitted) root id: {logicalRootId}, representative point count: {rootPoints.Length}");
+        Console.WriteLine($"Logical root bbox: min=({logicalRoot.Bbox.MinX:F1},{logicalRoot.Bbox.MinY:F1},{logicalRoot.Bbox.MinZ:F1}) size={logicalRoot.Bbox.Size:F1}");
+
+        Console.WriteLine("Exporting 3D Tiles dataset...");
+        string tilesDir = Path.Combine(workDir, "3dtiles");
+        Tiles3DExporter.Export(metadata, nodeStore, logicalRootId, gridDivisions: options.GridDivisions, tilesDir, TileRefine.Add, reference);
+        Console.WriteLine($"3D Tiles dataset written to: {tilesDir}");
+
+        return Task.CompletedTask;
     }
 }

@@ -1,7 +1,7 @@
 using System;
 using System.IO;
-using OctreeLod.Core.Ingest;
 using OctreeLod.Core.Model;
+using OctreeLod.Core.SplitMergeEngine.Ingest;
 
 namespace OctreeLod.Tests;
 

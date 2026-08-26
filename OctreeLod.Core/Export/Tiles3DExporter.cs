@@ -1,30 +1,44 @@
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using OctreeLod.Core.Merge;
 using OctreeLod.Core.Model;
 
 namespace OctreeLod.Core.Export;
 
-// Exports the built + merged octree (phases 1-2) as a 3D Tiles dataset:
-// tileset.json + one legacy .pnts file per emitted node under content/.
-// Every non-empty node (leaf or internal) gets real content, since grid
-// subsampling means every LOD level has genuine representative samples —
-// unlike typical BVH tilesets with empty non-leaf placeholders.
+// A node's content set is either self-contained (a complete, if coarse,
+// sample of its whole spatial footprint — safe to swap in place of its
+// children, REPLACE) or complementary (only the points its children didn't
+// already capture — meaningless without its ancestors' content also shown,
+// requires ADD). Which one a given engine produces is a property of how it
+// builds node content, not a per-dataset choice — see call sites.
+public enum TileRefine
+{
+    Add,
+    Replace,
+}
+
+// Exports a built octree (from either engine — legacy split+merge or
+// spacing-based) as a 3D Tiles dataset: tileset.json + one legacy .pnts file
+// per emitted node under content/. Every non-empty node (leaf or internal)
+// gets real content, since both engines produce a genuine representative
+// sample at every LOD level — unlike typical BVH tilesets with empty
+// non-leaf placeholders.
 public static class Tiles3DExporter
 {
     public static void Export(
         INodeMetadataStore metadata,
-        IMergedPointStore mergedStore,
+        INodePointStore mergedStore,
         long rootId,
         int gridDivisions,
         string outputDirectory,
+        TileRefine refine,
         GeoReference? geoReference = null)
     {
         string contentDir = Path.Combine(outputDirectory, "content");
         Directory.CreateDirectory(contentDir);
 
-        var rootTile = BuildTile(metadata, mergedStore, rootId, gridDivisions, contentDir, isRoot: true);
+        string refineJson = refine == TileRefine.Add ? "ADD" : "REPLACE";
+        var rootTile = BuildTile(metadata, mergedStore, rootId, gridDivisions, contentDir, isRoot: true, refineJson);
 
         if (geoReference.HasValue)
         {
@@ -58,11 +72,12 @@ public static class Tiles3DExporter
 
     private static TileResult BuildTile(
         INodeMetadataStore metadata,
-        IMergedPointStore mergedStore,
+        INodePointStore mergedStore,
         long nodeId,
         int gridDivisions,
         string contentDir,
-        bool isRoot)
+        bool isRoot,
+        string refineJson)
     {
         var node = metadata.Get(nodeId);
         var points = mergedStore.ReadAll(nodeId);
@@ -81,14 +96,14 @@ public static class Tiles3DExporter
             ["geometricError"] = geometricError,
             ["content"] = new Dictionary<string, object> { ["uri"] = "content/" + contentFileName },
         };
-        if (isRoot) tile["refine"] = "ADD"; // inherited by children per spec
+        if (isRoot) tile["refine"] = refineJson; // inherited by children per spec
 
         var childIds = OctreeStructureUtil.NonEmptyChildIds(metadata, node);
         if (childIds.Count > 0)
         {
             var children = new List<object>();
             foreach (var childId in childIds)
-                children.Add(BuildTile(metadata, mergedStore, childId, gridDivisions, contentDir, isRoot: false).Json);
+                children.Add(BuildTile(metadata, mergedStore, childId, gridDivisions, contentDir, isRoot: false, refineJson).Json);
             tile["children"] = children;
         }
 

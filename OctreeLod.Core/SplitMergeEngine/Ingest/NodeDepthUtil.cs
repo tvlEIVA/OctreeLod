@@ -1,6 +1,6 @@
 using OctreeLod.Core.Model;
 
-namespace OctreeLod.Core.Ingest;
+namespace OctreeLod.Core.SplitMergeEngine.Ingest;
 
 internal static class NodeDepthUtil
 {
