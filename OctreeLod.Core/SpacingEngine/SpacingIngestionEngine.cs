@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using OctreeLod.Core.Model;
-using OctreeLod.Core.SplitMergeEngine.Ingest;
 
 namespace OctreeLod.Core.SpacingEngine;
 
@@ -60,7 +59,7 @@ public sealed class SpacingIngestionEngine
                 return;
             }
 
-            int depth = NodeDepthUtil.DepthOf(node);
+            int depth = node.Depth;
             if (depth >= _options.MaxSplitDepth)
             {
                 // Documented, deliberate violation: a pathological

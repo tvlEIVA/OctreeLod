@@ -46,7 +46,7 @@ public sealed class OctreeIngestionEngine
         var leaf = DescendToLeaf(point);
 
         bool stuckAtMaxDepth = leaf.PointCount >= _options.SplitThreshold
-            && NodeDepthUtil.DepthOf(leaf) >= _options.MaxSplitDepth;
+            && leaf.Depth >= _options.MaxSplitDepth;
         if (stuckAtMaxDepth)
         {
             _options.OnWarning?.Invoke($"Leaf {leaf.Id} frozen at max split depth — dropping point.");
@@ -81,7 +81,7 @@ public sealed class OctreeIngestionEngine
             var node = stack.Pop();
             if (!node.IsLeaf || node.PointCount < _options.SplitThreshold) continue;
 
-            int depth = NodeDepthUtil.DepthOf(node);
+            int depth = node.Depth;
             if (depth >= _options.MaxSplitDepth)
             {
                 // Documented, deliberate violation: a pathological

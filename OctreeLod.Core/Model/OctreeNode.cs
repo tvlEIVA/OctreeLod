@@ -26,6 +26,7 @@ public sealed class OctreeNode
 {
     public BigInteger Id;
     public OctreeNode? Parent;
+    public int Depth;
     public BoundingCube Bbox;
     public bool IsLeaf;
     public long PointCount;
@@ -38,6 +39,7 @@ public sealed class OctreeNode
         {
             Id = BigInteger.Zero,
             Parent = null,
+            Depth = 0,
             Bbox = bbox,
             IsLeaf = true,
             PointCount = 0,
@@ -45,12 +47,16 @@ public sealed class OctreeNode
         };
     }
 
+    // Set once here and never touched again — safe to cache rather than walk
+    // Parent on every query, since nothing in this codebase ever reparents a
+    // node after construction.
     public static OctreeNode CreateChild(OctreeNode parent, int octant, BoundingCube bbox)
     {
         return new OctreeNode
         {
             Id = parent.Id * 8 + octant + 1,
             Parent = parent,
+            Depth = parent.Depth + 1,
             Bbox = bbox,
             IsLeaf = true,
             PointCount = 0,

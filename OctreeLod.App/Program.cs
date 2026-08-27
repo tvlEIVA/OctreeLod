@@ -28,7 +28,7 @@ public static class Program
     // + MergeEngine) and the spacing-based single-pass engine
     // (SpacingIngestionEngine) — see README "How it works" for the
     // difference.
-    private const bool UseSpacingEngine = false;
+    private const bool UseSpacingEngine = true;
 
     public static async Task Main()
     {
