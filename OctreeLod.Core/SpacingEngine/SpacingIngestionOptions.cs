@@ -27,9 +27,9 @@ public sealed class SpacingIngestionOptions
     // held in RAM at once (LRU). Every other node's data lives on disk in
     // the INodePointStore passed to SpacingIngestionEngine and is reloaded
     // on next touch. Ancestors near the root are touched by every point and
-    // so stay resident regardless of this value; this bounds how many
-    // deep/leaf nodes' point sets can be resident simultaneously.
-    public int MaxResidentNodes { get; set; } = 4096;
+    // so stay in memory regardless of this value; this bounds how many
+    // deep/leaf nodes' point sets can be in memory simultaneously.
+    public int MaxInMemoryNodes { get; set; } = 4096;
 
     public Action<string>? OnWarning { get; set; }
 }

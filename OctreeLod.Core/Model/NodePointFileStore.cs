@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Numerics;
 using System.Text;
 
 namespace OctreeLod.Core.Model;
@@ -18,7 +19,7 @@ namespace OctreeLod.Core.Model;
 public sealed class NodePointFileStore : INodePointStore, IDisposable
 {
     private readonly FileStream _file;
-    private readonly Dictionary<long, (long Offset, int Count)> _index = new Dictionary<long, (long Offset, int Count)>();
+    private readonly Dictionary<BigInteger, (long Offset, int Count)> _index = new Dictionary<BigInteger, (long Offset, int Count)>();
 
     public NodePointFileStore(string directory)
     {
@@ -27,7 +28,7 @@ public sealed class NodePointFileStore : INodePointStore, IDisposable
         _file = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 4096, FileOptions.RandomAccess);
     }
 
-    public void WriteAll(long nodeId, PointRecord[] points)
+    public void WriteAll(BigInteger nodeId, PointRecord[] points)
     {
         long offset = _file.Length;
         _file.Seek(offset, SeekOrigin.Begin);
@@ -46,7 +47,7 @@ public sealed class NodePointFileStore : INodePointStore, IDisposable
         _index[nodeId] = (offset, points.Length);
     }
 
-    public PointRecord[] ReadAll(long nodeId)
+    public PointRecord[] ReadAll(BigInteger nodeId)
     {
         if (!_index.TryGetValue(nodeId, out var entry)) return Array.Empty<PointRecord>();
 

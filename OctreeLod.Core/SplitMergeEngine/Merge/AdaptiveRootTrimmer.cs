@@ -17,15 +17,14 @@ public static class AdaptiveRootTrimmer
     // not need phase-2 merge to have run first, since an internal node is
     // only ever created by an overflow (i.e. always has >=1 non-empty
     // child), so "empty" reduces to "leaf with zero points".
-    public static long TrimToLogicalRoot(INodeMetadataStore metadata, long trueTopId)
+    public static OctreeNode TrimToLogicalRoot(OctreeNode trueTop)
     {
-        long current = trueTopId;
+        var current = trueTop;
         while (true)
         {
-            var node = metadata.Get(current);
-            if (node.IsLeaf) return current;
+            if (current.IsLeaf) return current;
 
-            var nonEmpty = OctreeStructureUtil.NonEmptyChildIds(metadata, node);
+            var nonEmpty = OctreeStructureUtil.NonEmptyChildren(current);
             if (nonEmpty.Count != 1) return current;
             current = nonEmpty[0];
         }

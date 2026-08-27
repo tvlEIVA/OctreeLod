@@ -22,9 +22,8 @@ public class EndToEndTests : IDisposable
             SplitThreshold = threshold,
             MaxSplitDepth = 40,
         };
-        var metadata = new InMemoryNodeMetadataStore();
         using var leafStore = new SlabPointStore(Path.Combine(_dir, "leaves.bin"), threshold);
-        var engine = new OctreeIngestionEngine(metadata, leafStore, options);
+        var engine = new OctreeIngestionEngine(leafStore, options);
 
         var allPoints = BuildSyntheticDataset();
         // Stream in irregular batches, mirroring real arrival patterns.
@@ -41,36 +40,30 @@ public class EndToEndTests : IDisposable
         // Invariant: no data lost during ingestion — every raw point is
         // still recoverable from exactly one leaf's buffer.
         long totalStored = 0;
-        WalkLeaves(metadata, engine.RootId, leafId =>
-        {
-            var leaf = metadata.Get(leafId);
-            totalStored += leaf.PointCount;
-        });
+        WalkLeaves(engine.Root, leaf => totalStored += leaf.PointCount);
         Assert.Equal(allPoints.Count, totalStored);
 
         // Phase 2.
         using var mergedStore = new NodePointFileStore(Path.Combine(_dir, "merged"));
-        var mergeEngine = new MergeEngine(metadata, leafStore, mergedStore, gridDivisions: 32, maxDegreeOfParallelism: 4);
-        await mergeEngine.MergeAsync(engine.RootId);
+        var mergeEngine = new MergeEngine(leafStore, mergedStore, gridDivisions: 32, maxDegreeOfParallelism: 4);
+        await mergeEngine.MergeAsync(engine.Root);
 
-        long logicalRootId = AdaptiveRootTrimmer.TrimToLogicalRoot(metadata, engine.RootId);
-        var logicalRoot = metadata.Get(logicalRootId);
+        var logicalRoot = AdaptiveRootTrimmer.TrimToLogicalRoot(engine.Root);
 
         // The two real clusters are far apart relative to their own extent,
         // so the branching point must have been found (not the untouched
         // geometric top, and not over-collapsed into one cluster only).
-        Assert.NotEqual(engine.RootId, logicalRootId);
+        Assert.NotSame(engine.Root, logicalRoot);
         int nonEmptyChildren = 0;
         for (int octant = 0; octant < 8; octant++)
         {
-            long childId = logicalRoot.Children[octant];
-            if (childId == NodeRecord.NoneId) continue;
-            var child = metadata.Get(childId);
+            var child = logicalRoot.Children[octant];
+            if (child == null) continue;
             if (!(child.IsLeaf && child.PointCount == 0)) nonEmptyChildren++;
         }
         Assert.True(nonEmptyChildren >= 2, "logical root should be the real branching point between the two clusters");
 
-        var rootPoints = mergedStore.ReadAll(logicalRootId);
+        var rootPoints = mergedStore.ReadAll(logicalRoot.Id);
         Assert.True(rootPoints.Length > 0);
         Assert.True(rootPoints.Length <= allPoints.Count);
     }
@@ -118,14 +111,13 @@ public class EndToEndTests : IDisposable
         return points;
     }
 
-    private static void WalkLeaves(InMemoryNodeMetadataStore metadata, long nodeId, Action<long> onLeaf)
+    private static void WalkLeaves(OctreeNode node, Action<OctreeNode> onLeaf)
     {
-        var node = metadata.Get(nodeId);
-        if (node.IsLeaf) { onLeaf(nodeId); return; }
+        if (node.IsLeaf) { onLeaf(node); return; }
         for (int octant = 0; octant < 8; octant++)
         {
-            long childId = node.Children[octant];
-            if (childId != NodeRecord.NoneId) WalkLeaves(metadata, childId, onLeaf);
+            var child = node.Children[octant];
+            if (child != null) WalkLeaves(child, onLeaf);
         }
     }
 

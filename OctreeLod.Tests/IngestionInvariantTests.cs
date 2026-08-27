@@ -16,9 +16,8 @@ public class IngestionInvariantTests : IDisposable
     {
         const int threshold = 50;
         var options = new OctreeIngestionOptions { SplitThreshold = threshold };
-        var metadata = new InMemoryNodeMetadataStore();
         using var store = new SlabPointStore(Path.Combine(_dir, "leaves.bin"), threshold);
-        var engine = new OctreeIngestionEngine(metadata, store, options);
+        var engine = new OctreeIngestionEngine(store, options);
 
         var random = new Random(3);
         long expectedTotal = 0;
@@ -29,7 +28,7 @@ public class IngestionInvariantTests : IDisposable
             engine.IngestBatch(points);
             expectedTotal += points.Count;
 
-            long actualTotal = SumLeafPointCounts(metadata, engine.RootId);
+            long actualTotal = SumLeafPointCounts(engine.Root);
             Assert.Equal(expectedTotal, actualTotal);
         }
     }
@@ -39,20 +38,18 @@ public class IngestionInvariantTests : IDisposable
     {
         const int threshold = 30;
         var options = new OctreeIngestionOptions { SplitThreshold = threshold };
-        var metadata = new InMemoryNodeMetadataStore();
         using var store = new SlabPointStore(Path.Combine(_dir, "leaves.bin"), threshold);
-        var engine = new OctreeIngestionEngine(metadata, store, options);
+        var engine = new OctreeIngestionEngine(store, options);
 
         var random = new Random(9);
         engine.IngestBatch(MakeRandomBatch(random, count: 4000));
 
-        WalkLeaves(metadata, engine.RootId, leafId =>
+        WalkLeaves(engine.Root, leaf =>
         {
-            var leaf = metadata.Get(leafId);
             if (leaf.PointCount == 0) return;
             var points = store.ReadAll(leaf.Storage, (int)leaf.PointCount);
             foreach (var p in points)
-                Assert.True(leaf.Bbox.Contains(p), $"point ({p.X},{p.Y},{p.Z}) not contained in leaf {leafId}'s bbox");
+                Assert.True(leaf.Bbox.Contains(p), $"point ({p.X},{p.Y},{p.Z}) not contained in leaf {leaf.Id}'s bbox");
         });
     }
 
@@ -61,19 +58,17 @@ public class IngestionInvariantTests : IDisposable
     {
         const int threshold = 20;
         var options = new OctreeIngestionOptions { SplitThreshold = threshold };
-        var metadata = new InMemoryNodeMetadataStore();
         using var store = new SlabPointStore(Path.Combine(_dir, "leaves.bin"), threshold);
-        var engine = new OctreeIngestionEngine(metadata, store, options);
+        var engine = new OctreeIngestionEngine(store, options);
 
         engine.IngestBatch(MakeRandomBatch(new Random(11), count: 6000));
 
-        WalkAll(metadata, engine.RootId, (nodeId, node) =>
+        WalkAll(engine.Root, node =>
         {
             if (node.IsLeaf) return;
             for (int octant = 0; octant < 8; octant++)
             {
-                long childId = node.Children[octant];
-                var child = metadata.Get(childId);
+                var child = node.Children[octant]!;
                 Assert.True(child.Bbox.MinX >= node.Bbox.MinX && child.Bbox.MinX + child.Bbox.Size <= node.Bbox.MinX + node.Bbox.Size);
                 Assert.True(child.Bbox.MinY >= node.Bbox.MinY && child.Bbox.MinY + child.Bbox.Size <= node.Bbox.MinY + node.Bbox.Size);
                 Assert.True(child.Bbox.MinZ >= node.Bbox.MinZ && child.Bbox.MinZ + child.Bbox.Size <= node.Bbox.MinZ + node.Bbox.Size);
@@ -91,9 +86,8 @@ public class IngestionInvariantTests : IDisposable
     {
         const int threshold = 25;
         var options = new OctreeIngestionOptions { SplitThreshold = threshold };
-        var metadata = new InMemoryNodeMetadataStore();
         using var store = new SlabPointStore(Path.Combine(_dir + "-" + seed, "leaves.bin"), threshold);
-        var engine = new OctreeIngestionEngine(metadata, store, options);
+        var engine = new OctreeIngestionEngine(store, options);
 
         var random = new Random(seed);
         var allPoints = MakeRandomBatch(random, count: 3000);
@@ -113,13 +107,12 @@ public class IngestionInvariantTests : IDisposable
             engine.IngestBatch(batch);
             expectedTotal += batch.Count;
 
-            Assert.Equal(expectedTotal, SumLeafPointCounts(metadata, engine.RootId));
+            Assert.Equal(expectedTotal, SumLeafPointCounts(engine.Root));
         }
 
-        WalkLeaves(metadata, engine.RootId, leafId =>
+        WalkLeaves(engine.Root, leaf =>
         {
-            var leaf = metadata.Get(leafId);
-            Assert.True(leaf.PointCount <= threshold, $"leaf {leafId} exceeded threshold");
+            Assert.True(leaf.PointCount <= threshold, $"leaf {leaf.Id} exceeded threshold");
         });
     }
 
@@ -145,30 +138,29 @@ public class IngestionInvariantTests : IDisposable
         }
     }
 
-    private static long SumLeafPointCounts(InMemoryNodeMetadataStore metadata, long rootId)
+    private static long SumLeafPointCounts(OctreeNode root)
     {
         long total = 0;
-        WalkLeaves(metadata, rootId, leafId => total += metadata.Get(leafId).PointCount);
+        WalkLeaves(root, leaf => total += leaf.PointCount);
         return total;
     }
 
-    private static void WalkLeaves(InMemoryNodeMetadataStore metadata, long nodeId, Action<long> onLeaf)
+    private static void WalkLeaves(OctreeNode node, Action<OctreeNode> onLeaf)
     {
-        WalkAll(metadata, nodeId, (id, node) =>
+        WalkAll(node, n =>
         {
-            if (node.IsLeaf) onLeaf(id);
+            if (n.IsLeaf) onLeaf(n);
         });
     }
 
-    private static void WalkAll(InMemoryNodeMetadataStore metadata, long nodeId, Action<long, NodeRecord> onNode)
+    private static void WalkAll(OctreeNode node, Action<OctreeNode> onNode)
     {
-        var node = metadata.Get(nodeId);
-        onNode(nodeId, node);
+        onNode(node);
         if (node.IsLeaf) return;
         for (int octant = 0; octant < 8; octant++)
         {
-            long childId = node.Children[octant];
-            if (childId != NodeRecord.NoneId) WalkAll(metadata, childId, onNode);
+            var child = node.Children[octant];
+            if (child != null) WalkAll(child, onNode);
         }
     }
 

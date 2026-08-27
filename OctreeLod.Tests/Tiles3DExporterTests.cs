@@ -20,21 +20,20 @@ public class Tiles3DExporterTests : IDisposable
         const int threshold = 100;
         const int gridDivisions = 16;
         var options = new OctreeIngestionOptions { SplitThreshold = threshold, MaxSplitDepth = 40 };
-        var metadata = new InMemoryNodeMetadataStore();
         using var leafStore = new SlabPointStore(Path.Combine(_dir, "leaves.bin"), threshold);
-        var engine = new OctreeIngestionEngine(metadata, leafStore, options);
+        var engine = new OctreeIngestionEngine(leafStore, options);
 
         var random = new Random(21);
         engine.IngestBatch(MakeTwoClusterDataset(random));
 
         using var mergedStore = new NodePointFileStore(Path.Combine(_dir, "merged"));
-        var mergeEngine = new MergeEngine(metadata, leafStore, mergedStore, gridDivisions, maxDegreeOfParallelism: 4);
-        await mergeEngine.MergeAsync(engine.RootId);
+        var mergeEngine = new MergeEngine(leafStore, mergedStore, gridDivisions, maxDegreeOfParallelism: 4);
+        await mergeEngine.MergeAsync(engine.Root);
 
-        long logicalRootId = AdaptiveRootTrimmer.TrimToLogicalRoot(metadata, engine.RootId);
+        var logicalRoot = AdaptiveRootTrimmer.TrimToLogicalRoot(engine.Root);
 
         string outputDir = Path.Combine(_dir, "tiles-out");
-        Tiles3DExporter.Export(metadata, mergedStore, logicalRootId, gridDivisions, outputDir, TileRefine.Replace);
+        Tiles3DExporter.Export(logicalRoot, mergedStore, gridDivisions, outputDir, TileRefine.Replace);
 
         string tilesetPath = Path.Combine(outputDir, "tileset.json");
         Assert.True(File.Exists(tilesetPath));
@@ -57,9 +56,8 @@ public class Tiles3DExporterTests : IDisposable
     {
         const int threshold = 1000;
         var options = new OctreeIngestionOptions { SplitThreshold = threshold };
-        var metadata = new InMemoryNodeMetadataStore();
         using var leafStore = new SlabPointStore(Path.Combine(_dir, "leaves2.bin"), threshold);
-        var engine = new OctreeIngestionEngine(metadata, leafStore, options);
+        var engine = new OctreeIngestionEngine(leafStore, options);
 
         var random = new Random(5);
         var points = new List<PointRecord>();
@@ -69,21 +67,20 @@ public class Tiles3DExporterTests : IDisposable
 
         using var mergedStore = new NodePointFileStore(Path.Combine(_dir, "merged2"));
 
-        long logicalRootId = AdaptiveRootTrimmer.TrimToLogicalRoot(metadata, engine.RootId);
-        var logicalRoot = metadata.Get(logicalRootId);
+        var logicalRoot = AdaptiveRootTrimmer.TrimToLogicalRoot(engine.Root);
         Assert.True(logicalRoot.IsLeaf); // never overflowed, single leaf for the whole tree
 
-        mergedStore.WriteAll(logicalRootId, leafStore.ReadAll(logicalRoot.Storage, (int)logicalRoot.PointCount));
+        mergedStore.WriteAll(logicalRoot.Id, leafStore.ReadAll(logicalRoot.Storage, (int)logicalRoot.PointCount));
 
         string outputDir = Path.Combine(_dir, "tiles-out2");
-        Tiles3DExporter.Export(metadata, mergedStore, logicalRootId, gridDivisions: 16, outputDir, TileRefine.Replace);
+        Tiles3DExporter.Export(logicalRoot, mergedStore, gridDivisions: 16, outputDir, TileRefine.Replace);
 
         using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(outputDir, "tileset.json")));
         var rootTile = doc.RootElement.GetProperty("root");
 
         Assert.Equal(0, rootTile.GetProperty("geometricError").GetDouble());
         Assert.False(rootTile.TryGetProperty("children", out _));
-        Assert.True(File.Exists(Path.Combine(outputDir, "content", $"{logicalRootId}.pnts")));
+        Assert.True(File.Exists(Path.Combine(outputDir, "content", $"{logicalRoot.Id}.pnts")));
     }
 
     private static void WalkAndVerify(JsonElement tile, string outputDir, ref int visitedCount, double parentGeometricError)

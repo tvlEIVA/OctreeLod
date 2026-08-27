@@ -15,12 +15,26 @@ pass builds a level-of-detail pyramid, which is then exported as a
   each its own top-level folder/namespace root, sharing only `Model` and
   `Export`:
   - **`Model/`** — phase-agnostic types shared by both engines:
-    `PointRecord`, `BoundingCube`, `NodeRecord`, `StorageLocator`, the
-    metadata store, `OctreeStructureUtil` (the shared "is this child empty"
-    rule), and `INodePointStore`/`NodePointFileStore` — the out-of-core
-    per-node point store both engines write their final/paged output
-    through (deliberately generic, not "merged" — the spacing engine has no
-    merge phase and uses it purely to page nodes to disk mid-ingest).
+    `PointRecord`, `BoundingCube`, `OctreeNode`, `StorageLocator`, `CellKey`,
+    `OctreeStructureUtil` (the shared "is this child empty" rule), and
+    `INodePointStore`/`NodePointFileStore` — the out-of-core per-node point
+    store both engines write their final/paged output through (deliberately
+    generic, not "merged" — the spacing engine has no merge phase and uses
+    it purely to page nodes to disk mid-ingest). `OctreeNode` is a real
+    reference-type tree node — `Parent`/`Children[8]` are direct object
+    references, so the whole tree is reachable from just the root (an
+    engine exposes `Root`, nothing else — no separate metadata store or
+    id-indexed list). Every node still carries a stable `Id`, but only as an
+    external handle: `INodePointStore` keys on-disk point data by it, and
+    3D Tiles export uses it as the content filename (`{id}.pnts`) — it
+    plays no role in in-memory traversal. `Id` is derived from position, not
+    a counter: root = 0, child = `parent.Id * 8 + octant + 1` (standard
+    complete-8-ary-tree indexing — same arithmetic a binary heap uses,
+    generalized from 2 children to 8). Deterministic and collision-free by
+    construction, but the id needs ~3 bits per depth level, and both
+    engines' `MaxSplitDepth` defaults to 60 — 180 bits at that depth, well
+    past a 64-bit range — so `Id` is `System.Numerics.BigInteger`, not
+    `long`.
   - **`SplitMergeEngine/`** — the legacy two-phase engine, dependencies flow
     one way: phase 1 → phase 2, each only ever referencing the one before.
     - **`Ingest/`** — phase 1: `OctreeIngestionEngine` (streaming split
@@ -120,17 +134,17 @@ closer to real PotreeConverter's behavior.
 **Out-of-core via paging.** A point for any node — even one near the root —
 can arrive at any time until the stream ends, so no node's accepted-point
 set can be considered final and dropped mid-run. Instead, each node's
-accepted-point dictionary is paged: only the `MaxResidentNodes`
+accepted-point dictionary is paged: only the `MaxInMemoryNodes`
 most-recently-touched nodes are held in RAM at once (a plain LRU), backed by
 the same `INodePointStore` passed into the constructor. A node that falls
 out of the cache is written to disk; touching it again later reloads its
 point list and re-derives the cell keys (deterministic from position + the
 node's own bbox/spacing, so nothing extra needs to be persisted) rather than
 reusing a stale key it never wrote out. Ancestors near the root are touched
-by literally every point, so they stay resident regardless of the cap;
-`MaxResidentNodes` really only bounds how many of the (far more numerous)
-deep/leaf nodes' point sets can be resident simultaneously. `Flush()` at the
-end just writes out whatever's still resident — everything evicted mid-run
+by literally every point, so they stay in memory regardless of the cap;
+`MaxInMemoryNodes` really only bounds how many of the (far more numerous)
+deep/leaf nodes' point sets can be in memory simultaneously. `Flush()` at the
+end just writes out whatever's still in memory — everything evicted mid-run
 is already on disk.
 
 This is a straightforward page cache, not a true bounded-memory guarantee
@@ -209,7 +223,7 @@ dotnet test OctreeLod.Tests/OctreeLod.Tests.csproj
 | `gridDivisions` | `MergeEngine` / `Tiles3DExporter` (must match between the two calls) | Cells per bbox edge during subsampling. Smaller → stronger compression, chunkier LOD steps; larger → smoother LOD, weaker compression. Currently a plain literal (`64`) at each call site in `Program.cs`, not derived from `SplitThreshold`. |
 | `UseSpacingEngine` | `Program.cs` | Switches between the legacy split+merge pipeline and the spacing-based single-pass engine. |
 | `SpacingIngestionOptions.GridDivisions` | `SpacingIngestionOptions` | Same role as `gridDivisions` above, but for the spacing engine — read directly at both ingest and export time (no separate merge call to keep in sync). |
-| `SpacingIngestionOptions.MaxResidentNodes` | `SpacingIngestionOptions` | Out-of-core bound: max node point-sets held in RAM at once (LRU-paged to disk). Smaller → less RAM, more disk I/O from evict/reload thrashing on scattered input; larger → more RAM, fewer reloads. |
+| `SpacingIngestionOptions.MaxInMemoryNodes` | `SpacingIngestionOptions` | Out-of-core bound: max node point-sets held in RAM at once (LRU-paged to disk). Smaller → less RAM, more disk I/O from evict/reload thrashing on scattered input; larger → more RAM, fewer reloads. |
 
 ## Known limitations / not yet built
 

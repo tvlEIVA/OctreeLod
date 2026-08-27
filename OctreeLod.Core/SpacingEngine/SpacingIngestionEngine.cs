@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Linq;
 using OctreeLod.Core.Model;
 using OctreeLod.Core.SplitMergeEngine.Ingest;
 
@@ -13,41 +12,25 @@ namespace OctreeLod.Core.SpacingEngine;
 // its final representative set once ingestion ends — no separate bottom-up
 // merge/subsample pass needed (contrast OctreeIngestionEngine + MergeEngine).
 //
-// Out-of-core: a point for any node (even one near the root) can arrive at
-// any time until the stream ends, so no node's accepted-point set can be
-// considered "final" and dropped mid-run. Instead, node point sets are
-// paged: only the `MaxResidentNodes` most-recently-touched nodes' cell
-// dictionaries are held in RAM at once (LRU); every other node's data lives
-// in `nodeStore` on disk and is reloaded (re-keyed by cell, from the raw
-// point list — no separate index needed) the next time a point routes
-// through it. Ancestors near the root are touched by every single point and
-// so stay resident naturally; deep/leaf nodes cool off and page out once the
-// stream moves past their region.
+// Out-of-core node paging (only `MaxInMemoryNodes` nodes' cell maps held in
+// RAM at once, LRU) is handled entirely by PagedCellMapCache — this class
+// only owns the octree descent/accept/reject algorithm.
 public sealed class SpacingIngestionEngine
 {
-    private readonly INodeMetadataStore _metadata;
-    private readonly INodePointStore _nodeStore;
     private readonly SpacingIngestionOptions _options;
+    private readonly PagedCellMapCache _cache;
+    private long _nodeCount;
 
-    private readonly Dictionary<long, Dictionary<(int, int, int), PointRecord>> _resident =
-        new Dictionary<long, Dictionary<(int, int, int), PointRecord>>();
-    private readonly LinkedList<long> _lru = new LinkedList<long>(); // most-recently-used at the front
-    private readonly Dictionary<long, LinkedListNode<long>> _lruNodes = new Dictionary<long, LinkedListNode<long>>();
+    public OctreeNode Root { get; }
+    public long NodeCount => _nodeCount;
 
-    public long RootId => _metadata.RootId;
-
-    public SpacingIngestionEngine(INodeMetadataStore metadata, INodePointStore nodeStore, SpacingIngestionOptions options)
+    public SpacingIngestionEngine(INodePointStore nodeStore, SpacingIngestionOptions options)
     {
-        _metadata = metadata;
-        _nodeStore = nodeStore;
         _options = options;
+        _cache = new PagedCellMapCache(nodeStore, options.MaxInMemoryNodes);
 
-        if (_metadata.Count == 0)
-        {
-            var root = NodeRecord.CreateLeaf(NodeRecord.NoneId, -1, options.WorldBounds);
-            long rootId = _metadata.Allocate(root);
-            _metadata.RootId = rootId;
-        }
+        Root = OctreeNode.CreateRoot(options.WorldBounds);
+        _nodeCount = 1;
     }
 
     public void IngestBatch(IEnumerable<PointRecord> points)
@@ -63,23 +46,21 @@ public sealed class SpacingIngestionEngine
             return;
         }
 
-        long nodeId = _metadata.RootId;
+        var node = Root;
         while (true)
         {
-            var node = _metadata.Get(nodeId);
             double cellSize = node.Bbox.Size / _options.GridDivisions;
-            var key = CellKey(point, node.Bbox, cellSize);
+            var key = CellKey.FromPoint(point, node.Bbox, cellSize);
 
-            var cells = Touch(nodeId, node.Bbox, cellSize);
+            var cells = _cache.Touch(node.Id, node.Bbox, cellSize);
             if (!cells.ContainsKey(key))
             {
                 cells[key] = point;
                 node.PointCount++;
-                _metadata.Set(nodeId, node);
                 return;
             }
 
-            int depth = NodeDepthUtil.DepthOf(_metadata, nodeId);
+            int depth = NodeDepthUtil.DepthOf(node);
             if (depth >= _options.MaxSplitDepth)
             {
                 // Documented, deliberate violation: a pathological
@@ -90,90 +71,31 @@ public sealed class SpacingIngestionEngine
                 // spacing node has no "oversized" concept — its cell map
                 // just stays as-is.
                 _options.OnWarning?.Invoke(
-                    $"Node {nodeId} hit max split depth {_options.MaxSplitDepth} resolving a spacing collision; dropping point.");
+                    $"Node {node.Id} hit max split depth {_options.MaxSplitDepth} resolving a spacing collision; dropping point.");
                 return;
             }
 
             int octant = node.Bbox.Octant(point);
-            nodeId = EnsureChild(nodeId, node, octant);
+            node = EnsureChild(node, octant);
         }
     }
 
-    private long EnsureChild(long nodeId, NodeRecord node, int octant)
+    private OctreeNode EnsureChild(OctreeNode node, int octant)
     {
-        long childId = node.Children[octant];
-        if (childId != NodeRecord.NoneId) return childId;
+        var child = node.Children[octant];
+        if (child != null) return child;
 
         var childBbox = node.Bbox.ChildBounds(octant);
-        var child = NodeRecord.CreateLeaf(nodeId, octant, childBbox);
-        childId = _metadata.Allocate(child);
+        child = OctreeNode.CreateChild(node, octant, childBbox);
+        _nodeCount++;
 
         node.IsLeaf = false;
-        node.Children[octant] = childId;
-        _metadata.Set(nodeId, node);
+        node.Children[octant] = child;
 
-        return childId;
+        return child;
     }
 
-    // Returns the node's live cell dictionary, loading it from disk (a
-    // brand-new node just yields an empty read) if it isn't resident, and
-    // marks it most-recently-used. May evict some other node to disk to stay
-    // within MaxResidentNodes.
-    private Dictionary<(int, int, int), PointRecord> Touch(long nodeId, in BoundingCube bbox, double cellSize)
-    {
-        if (_resident.TryGetValue(nodeId, out var cells))
-        {
-            var lruNode = _lruNodes[nodeId];
-            if (lruNode != _lru.First)
-            {
-                _lru.Remove(lruNode);
-                _lru.AddFirst(lruNode);
-            }
-            return cells;
-        }
-
-        cells = new Dictionary<(int, int, int), PointRecord>();
-        foreach (var p in _nodeStore.ReadAll(nodeId))
-            cells[CellKey(p, bbox, cellSize)] = p;
-
-        _resident[nodeId] = cells;
-        _lruNodes[nodeId] = _lru.AddFirst(nodeId);
-
-        EvictIfOverCapacity();
-        return cells;
-    }
-
-    private void EvictIfOverCapacity()
-    {
-        while (_resident.Count > _options.MaxResidentNodes && _lru.Last != null)
-        {
-            long evictId = _lru.Last.Value;
-            _lru.RemoveLast();
-            _lruNodes.Remove(evictId);
-
-            var cells = _resident[evictId];
-            _resident.Remove(evictId);
-            _nodeStore.WriteAll(evictId, cells.Values.ToArray());
-        }
-    }
-
-    private static (int, int, int) CellKey(in PointRecord p, in BoundingCube bbox, double cellSize)
-    {
-        int cx = (int)((p.X - bbox.MinX) / cellSize);
-        int cy = (int)((p.Y - bbox.MinY) / cellSize);
-        int cz = (int)((p.Z - bbox.MinZ) / cellSize);
-        return (cx, cy, cz);
-    }
-
-    // Writes out whatever's still resident once the stream ends — everything
-    // already evicted mid-run is on disk already. After this call, every
-    // node's complete accepted-point set is readable from `nodeStore`.
-    public void Flush()
-    {
-        foreach (var pair in _resident)
-            _nodeStore.WriteAll(pair.Key, pair.Value.Values.ToArray());
-        _resident.Clear();
-        _lru.Clear();
-        _lruNodes.Clear();
-    }
+    // Persists whatever's still in memory in the cache once the stream ends
+    // — everything already evicted mid-run is on disk already.
+    public void Flush() => _cache.Flush();
 }

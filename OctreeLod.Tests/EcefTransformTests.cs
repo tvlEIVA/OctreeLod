@@ -72,11 +72,11 @@ public class EcefTransformTests : IDisposable
     [Fact]
     public void NoGeoReference_TilesetHasNoTransform()
     {
-        var (metadata, mergedStore, rootId) = BuildTinySingleNodeTree();
+        var (root, mergedStore) = BuildTinySingleNodeTree();
         using var disposeMergedStore = mergedStore;
         string outputDir = Path.Combine(_dir, "no-geo");
 
-        Tiles3DExporter.Export(metadata, mergedStore, rootId, gridDivisions: 8, outputDir, TileRefine.Replace);
+        Tiles3DExporter.Export(root, mergedStore, gridDivisions: 8, outputDir, TileRefine.Replace);
 
         using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(outputDir, "tileset.json")));
         Assert.False(doc.RootElement.GetProperty("root").TryGetProperty("transform", out _));
@@ -84,11 +84,11 @@ public class EcefTransformTests : IDisposable
 
     private double[] ExportAndReadTransform(GeoReference reference)
     {
-        var (metadata, mergedStore, rootId) = BuildTinySingleNodeTree();
+        var (root, mergedStore) = BuildTinySingleNodeTree();
         using var disposeMergedStore = mergedStore;
         string outputDir = Path.Combine(_dir, Guid.NewGuid().ToString("N"));
 
-        Tiles3DExporter.Export(metadata, mergedStore, rootId, gridDivisions: 8, outputDir, TileRefine.Replace, reference);
+        Tiles3DExporter.Export(root, mergedStore, gridDivisions: 8, outputDir, TileRefine.Replace, reference);
 
         using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(outputDir, "tileset.json")));
         var transformElement = doc.RootElement.GetProperty("root").GetProperty("transform");
@@ -98,19 +98,18 @@ public class EcefTransformTests : IDisposable
         return matrix;
     }
 
-    private (InMemoryNodeMetadataStore metadata, NodePointFileStore mergedStore, long rootId) BuildTinySingleNodeTree()
+    private (OctreeNode root, NodePointFileStore mergedStore) BuildTinySingleNodeTree()
     {
         const int threshold = 100;
         var options = new OctreeIngestionOptions { SplitThreshold = threshold };
-        var metadata = new InMemoryNodeMetadataStore();
         using var leafStore = new SlabPointStore(Path.Combine(_dir, Guid.NewGuid().ToString("N") + ".bin"), threshold);
-        var engine = new OctreeIngestionEngine(metadata, leafStore, options);
+        var engine = new OctreeIngestionEngine(leafStore, options);
         engine.IngestPoint(new PointRecord(1, 1, 1, 100, 50, 200));
 
         var mergedStore = new NodePointFileStore(Path.Combine(_dir, Guid.NewGuid().ToString("N")));
-        mergedStore.WriteAll(engine.RootId, leafStore.ReadAll(metadata.Get(engine.RootId).Storage, 1));
+        mergedStore.WriteAll(engine.Root.Id, leafStore.ReadAll(engine.Root.Storage, 1));
 
-        return (metadata, mergedStore, engine.RootId);
+        return (engine.Root, mergedStore);
     }
 
     private static void AssertUnitLength(double x, double y, double z) =>

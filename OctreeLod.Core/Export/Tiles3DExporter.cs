@@ -26,9 +26,8 @@ public enum TileRefine
 public static class Tiles3DExporter
 {
     public static void Export(
-        INodeMetadataStore metadata,
+        OctreeNode root,
         INodePointStore mergedStore,
-        long rootId,
         int gridDivisions,
         string outputDirectory,
         TileRefine refine,
@@ -38,7 +37,7 @@ public static class Tiles3DExporter
         Directory.CreateDirectory(contentDir);
 
         string refineJson = refine == TileRefine.Add ? "ADD" : "REPLACE";
-        var rootTile = BuildTile(metadata, mergedStore, rootId, gridDivisions, contentDir, isRoot: true, refineJson);
+        var rootTile = BuildTile(root, mergedStore, gridDivisions, contentDir, isRoot: true, refineJson);
 
         if (geoReference.HasValue)
         {
@@ -71,18 +70,16 @@ public static class Tiles3DExporter
     }
 
     private static TileResult BuildTile(
-        INodeMetadataStore metadata,
+        OctreeNode node,
         INodePointStore mergedStore,
-        long nodeId,
         int gridDivisions,
         string contentDir,
         bool isRoot,
         string refineJson)
     {
-        var node = metadata.Get(nodeId);
-        var points = mergedStore.ReadAll(nodeId);
+        var points = mergedStore.ReadAll(node.Id);
 
-        string contentFileName = nodeId.ToString(CultureInfo.InvariantCulture) + ".pnts";
+        string contentFileName = node.Id.ToString(CultureInfo.InvariantCulture) + ".pnts";
         PntsWriter.WriteFile(Path.Combine(contentDir, contentFileName), node.Bbox, points);
 
         // Internal (subsampled) node: error = spacing between representative
@@ -98,12 +95,12 @@ public static class Tiles3DExporter
         };
         if (isRoot) tile["refine"] = refineJson; // inherited by children per spec
 
-        var childIds = OctreeStructureUtil.NonEmptyChildIds(metadata, node);
-        if (childIds.Count > 0)
+        var childNodes = OctreeStructureUtil.NonEmptyChildren(node);
+        if (childNodes.Count > 0)
         {
             var children = new List<object>();
-            foreach (var childId in childIds)
-                children.Add(BuildTile(metadata, mergedStore, childId, gridDivisions, contentDir, isRoot: false, refineJson).Json);
+            foreach (var child in childNodes)
+                children.Add(BuildTile(child, mergedStore, gridDivisions, contentDir, isRoot: false, refineJson).Json);
             tile["children"] = children;
         }
 

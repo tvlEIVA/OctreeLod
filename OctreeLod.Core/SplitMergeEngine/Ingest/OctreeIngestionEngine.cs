@@ -13,27 +13,21 @@ namespace OctreeLod.Core.SplitMergeEngine.Ingest;
 // the next incoming point is processed.
 public sealed class OctreeIngestionEngine
 {
-    private readonly INodeMetadataStore _metadata;
     private readonly IPointBufferStore _pointStore;
     private readonly OctreeIngestionOptions _options;
+    private long _nodeCount;
 
-    public long RootId => _metadata.RootId;
+    public OctreeNode Root { get; }
+    public long NodeCount => _nodeCount;
 
-    public OctreeIngestionEngine(INodeMetadataStore metadata, IPointBufferStore pointStore, OctreeIngestionOptions options)
+    public OctreeIngestionEngine(IPointBufferStore pointStore, OctreeIngestionOptions options)
     {
-        _metadata = metadata;
         _pointStore = pointStore;
         _options = options;
 
-        if (_metadata.Count == 0)
-        {
-            var root = NodeRecord.CreateLeaf(NodeRecord.NoneId, -1, options.WorldBounds);
-            long rootId = _metadata.Allocate(root);
-            var stored = _metadata.Get(rootId);
-            stored.Storage = _pointStore.Allocate(rootId);
-            _metadata.Set(rootId, stored);
-            _metadata.RootId = rootId;
-        }
+        Root = OctreeNode.CreateRoot(options.WorldBounds);
+        _nodeCount = 1;
+        Root.Storage = _pointStore.Allocate(Root.Id);
     }
 
     public void IngestBatch(IEnumerable<PointRecord> points)
@@ -49,49 +43,45 @@ public sealed class OctreeIngestionEngine
             return;
         }
 
-        long leafId = DescendToLeaf(point);
-        var leaf = _metadata.Get(leafId);
+        var leaf = DescendToLeaf(point);
 
         bool stuckAtMaxDepth = leaf.PointCount >= _options.SplitThreshold
-            && NodeDepthUtil.DepthOf(_metadata, leafId) >= _options.MaxSplitDepth;
+            && NodeDepthUtil.DepthOf(leaf) >= _options.MaxSplitDepth;
         if (stuckAtMaxDepth)
         {
-            _options.OnWarning?.Invoke($"Leaf {leafId} frozen at max split depth — dropping point.");
+            _options.OnWarning?.Invoke($"Leaf {leaf.Id} frozen at max split depth — dropping point.");
             return;
         }
 
         _pointStore.Append(leaf.Storage, (int)leaf.PointCount, point);
         leaf.PointCount++;
-        _metadata.Set(leafId, leaf);
 
         if (leaf.PointCount >= _options.SplitThreshold)
-            ProcessOverflow(leafId);
+            ProcessOverflow(leaf);
     }
 
-    private long DescendToLeaf(PointRecord point)
+    private OctreeNode DescendToLeaf(PointRecord point)
     {
-        long currentId = _metadata.RootId;
-        while (true)
+        var node = Root;
+        while (!node.IsLeaf)
         {
-            var node = _metadata.Get(currentId);
-            if (node.IsLeaf) return currentId;
             int octant = node.Bbox.Octant(point);
-            currentId = node.Children[octant];
+            node = node.Children[octant]!;
         }
+        return node;
     }
 
-    private void ProcessOverflow(long startNodeId)
+    private void ProcessOverflow(OctreeNode startNode)
     {
-        var stack = new Stack<long>();
-        stack.Push(startNodeId);
+        var stack = new Stack<OctreeNode>();
+        stack.Push(startNode);
 
         while (stack.Count > 0)
         {
-            long nodeId = stack.Pop();
-            var node = _metadata.Get(nodeId);
+            var node = stack.Pop();
             if (!node.IsLeaf || node.PointCount < _options.SplitThreshold) continue;
 
-            int depth = NodeDepthUtil.DepthOf(_metadata, nodeId);
+            int depth = NodeDepthUtil.DepthOf(node);
             if (depth >= _options.MaxSplitDepth)
             {
                 // Documented, deliberate violation: a pathological
@@ -99,15 +89,15 @@ public sealed class OctreeIngestionEngine
                 // never separate. The leaf stays oversized; IngestPoint stops
                 // routing further points here once this state is reached.
                 _options.OnWarning?.Invoke(
-                    $"Leaf {nodeId} exceeded split threshold at max depth {_options.MaxSplitDepth}; accepting oversized leaf.");
+                    $"Leaf {node.Id} exceeded split threshold at max depth {_options.MaxSplitDepth}; accepting oversized leaf.");
                 continue;
             }
 
-            SplitLeaf(nodeId, node, stack);
+            SplitLeaf(node, stack);
         }
     }
 
-    private void SplitLeaf(long nodeId, NodeRecord node, Stack<long> stack)
+    private void SplitLeaf(OctreeNode node, Stack<OctreeNode> stack)
     {
         var buffered = _pointStore.ReadAll(node.Storage, (int)node.PointCount);
         _pointStore.Free(node.Storage);
@@ -115,37 +105,32 @@ public sealed class OctreeIngestionEngine
         node.IsLeaf = false;
         node.Storage = StorageLocator.None;
 
-        var childIds = new long[8];
+        var children = new OctreeNode[8];
         for (int octant = 0; octant < 8; octant++)
         {
             var childBbox = node.Bbox.ChildBounds(octant);
-            var child = NodeRecord.CreateLeaf(nodeId, octant, childBbox);
-            long childId = _metadata.Allocate(child);
-            var stored = _metadata.Get(childId);
-            stored.Storage = _pointStore.Allocate(childId);
-            _metadata.Set(childId, stored);
+            var child = OctreeNode.CreateChild(node, octant, childBbox);
+            _nodeCount++;
+            child.Storage = _pointStore.Allocate(child.Id);
 
-            childIds[octant] = childId;
-            node.Children[octant] = childId;
+            children[octant] = child;
+            node.Children[octant] = child;
         }
-        _metadata.Set(nodeId, node);
 
         var childCounts = new int[8];
         foreach (var p in buffered)
         {
             int octant = node.Bbox.Octant(p);
-            long childId = childIds[octant];
-            var child = _metadata.Get(childId);
+            var child = children[octant];
             _pointStore.Append(child.Storage, childCounts[octant], p);
             childCounts[octant]++;
             child.PointCount = childCounts[octant];
-            _metadata.Set(childId, child);
         }
 
         for (int octant = 0; octant < 8; octant++)
         {
             if (childCounts[octant] >= _options.SplitThreshold)
-                stack.Push(childIds[octant]);
+                stack.Push(children[octant]);
         }
     }
 }

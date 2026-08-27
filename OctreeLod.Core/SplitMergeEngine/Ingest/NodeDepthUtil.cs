@@ -7,14 +7,13 @@ internal static class NodeDepthUtil
     // Depth is never stored on a node (would go stale under any future
     // structural change) — walk the parent chain on demand. Only called on
     // overflow events, which are already bounded in number.
-    public static int DepthOf(INodeMetadataStore metadata, long nodeId)
+    public static int DepthOf(OctreeNode node)
     {
         int depth = 0;
-        var node = metadata.Get(nodeId);
-        while (node.ParentId != NodeRecord.NoneId)
+        while (node.Parent != null)
         {
             depth++;
-            node = metadata.Get(node.ParentId);
+            node = node.Parent;
         }
         return depth;
     }

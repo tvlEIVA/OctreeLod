@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Numerics;
 using System.Text;
 using OctreeLod.Core.Model;
 
@@ -49,7 +50,7 @@ public sealed class SlabPointStore : IPointBufferStore, IDisposable
         _file.SetLength(_allocatedSlots * _slotByteSize);
     }
 
-    public StorageLocator Allocate(long nodeId)
+    public StorageLocator Allocate(BigInteger nodeId)
     {
         if (_freeList.Count > 0) return _freeList.Pop();
 

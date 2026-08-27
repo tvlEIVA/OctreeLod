@@ -21,9 +21,8 @@ public class SpacingEndToEndTests : IDisposable
             GridDivisions = 32,
             MaxSplitDepth = 40,
         };
-        var metadata = new InMemoryNodeMetadataStore();
         using var nodeStore = new NodePointFileStore(Path.Combine(_dir, "nodes"));
-        var engine = new SpacingIngestionEngine(metadata, nodeStore, options);
+        var engine = new SpacingIngestionEngine(nodeStore, options);
 
         var allPoints = BuildSyntheticDataset();
         var random = new Random(123);
@@ -38,29 +37,27 @@ public class SpacingEndToEndTests : IDisposable
 
         engine.Flush();
 
-        long logicalRootId = AdaptiveRootTrimmer.TrimToLogicalRoot(metadata, engine.RootId);
-        var logicalRoot = metadata.Get(logicalRootId);
+        var logicalRoot = AdaptiveRootTrimmer.TrimToLogicalRoot(engine.Root);
 
         // Same shape assertion as the legacy pipeline's EndToEndTests: the
         // two clusters are far apart relative to their own extent, so the
         // branching point must have been found.
-        Assert.NotEqual(engine.RootId, logicalRootId);
+        Assert.NotSame(engine.Root, logicalRoot);
         int nonEmptyChildren = 0;
         for (int octant = 0; octant < 8; octant++)
         {
-            long childId = logicalRoot.Children[octant];
-            if (childId == NodeRecord.NoneId) continue;
-            var child = metadata.Get(childId);
+            var child = logicalRoot.Children[octant];
+            if (child == null) continue;
             if (!(child.IsLeaf && child.PointCount == 0)) nonEmptyChildren++;
         }
         Assert.True(nonEmptyChildren >= 2, "logical root should be the real branching point between the two clusters");
 
-        var rootPoints = nodeStore.ReadAll(logicalRootId);
+        var rootPoints = nodeStore.ReadAll(logicalRoot.Id);
         Assert.True(rootPoints.Length > 0);
         Assert.True(rootPoints.Length <= allPoints.Count);
 
         string tilesDir = Path.Combine(_dir, "3dtiles");
-        Tiles3DExporter.Export(metadata, nodeStore, logicalRootId, options.GridDivisions, tilesDir, TileRefine.Add);
+        Tiles3DExporter.Export(logicalRoot, nodeStore, options.GridDivisions, tilesDir, TileRefine.Add);
 
         string tilesetPath = Path.Combine(tilesDir, "tileset.json");
         Assert.True(File.Exists(tilesetPath));

@@ -9,20 +9,18 @@ namespace OctreeLod.Core.Model;
 // by an overflow, so it always has at least one non-empty descendant).
 public static class OctreeStructureUtil
 {
-    public static bool IsEmptyChild(NodeRecord child) => child.IsLeaf && child.PointCount == 0;
+    public static bool IsEmptyChild(OctreeNode child) => child.IsLeaf && child.PointCount == 0;
 
-    public static List<long> NonEmptyChildIds(INodeMetadataStore metadata, NodeRecord node)
+    public static List<OctreeNode> NonEmptyChildren(OctreeNode node)
     {
-        var result = new List<long>();
+        var result = new List<OctreeNode>();
         for (int octant = 0; octant < 8; octant++)
         {
-            long childId = node.Children[octant];
-            if (childId == NodeRecord.NoneId) continue;
-
-            var child = metadata.Get(childId);
+            var child = node.Children[octant];
+            if (child == null) continue;
             if (IsEmptyChild(child)) continue;
 
-            result.Add(childId);
+            result.Add(child);
         }
         return result;
     }

@@ -20,18 +20,15 @@ public static class GridSubsampler
     public static PointRecord[] Subsample(BoundingCube bbox, IEnumerable<PointRecord> points, int gridDivisions)
     {
         double cellSize = bbox.Size / gridDivisions;
-        var cells = new Dictionary<(int, int, int), Cell>();
+        var cells = new Dictionary<CellKey, Cell>();
 
         foreach (var p in points)
         {
-            int cx = (int)((p.X - bbox.MinX) / cellSize);
-            int cy = (int)((p.Y - bbox.MinY) / cellSize);
-            int cz = (int)((p.Z - bbox.MinZ) / cellSize);
-            var key = (cx, cy, cz);
+            var key = CellKey.FromPoint(p, bbox, cellSize);
 
-            double centerX = bbox.MinX + (cx + 0.5) * cellSize;
-            double centerY = bbox.MinY + (cy + 0.5) * cellSize;
-            double centerZ = bbox.MinZ + (cz + 0.5) * cellSize;
+            double centerX = bbox.MinX + (key.X + 0.5) * cellSize;
+            double centerY = bbox.MinY + (key.Y + 0.5) * cellSize;
+            double centerZ = bbox.MinZ + (key.Z + 0.5) * cellSize;
             double dx = p.X - centerX, dy = p.Y - centerY, dz = p.Z - centerZ;
             double distSq = dx * dx + dy * dy + dz * dz;
 

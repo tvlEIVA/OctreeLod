@@ -1,3 +1,4 @@
+using System.Numerics;
 using OctreeLod.Core.Model;
 
 namespace OctreeLod.Core.SplitMergeEngine.Ingest;
@@ -8,7 +9,7 @@ namespace OctreeLod.Core.SplitMergeEngine.Ingest;
 // point at a time here vs. one bulk write there.
 public interface IPointBufferStore
 {
-    StorageLocator Allocate(long nodeId);
+    StorageLocator Allocate(BigInteger nodeId);
     void Append(StorageLocator locator, int indexInSlot, in PointRecord point);
     PointRecord[] ReadAll(StorageLocator locator, int count);
     void Free(StorageLocator locator);

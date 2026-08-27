@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace OctreeLod.Core.Model;
 
 // Out-of-core point storage for a node's full representative set: one bulk
@@ -11,6 +13,6 @@ namespace OctreeLod.Core.Model;
 // be written and re-read several times as it's evicted/reloaded).
 public interface INodePointStore
 {
-    void WriteAll(long nodeId, PointRecord[] points);
-    PointRecord[] ReadAll(long nodeId);
+    void WriteAll(BigInteger nodeId, PointRecord[] points);
+    PointRecord[] ReadAll(BigInteger nodeId);
 }
