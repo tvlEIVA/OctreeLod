@@ -20,6 +20,20 @@ public sealed class SpacingIngestionEngine
     private readonly PagedCellMapCache _cache;
     private long _nodeCount;
 
+    // Locality fast path. A node's cell being occupied for a point implies
+    // every ancestor's corresponding cell is occupied too: a child cell
+    // bucket always nests inside exactly one specific parent cell bucket
+    // (fixed by the cell-index arithmetic, regardless of exact position
+    // within it), so whoever occupies that child bucket was necessarily
+    // rejected by that same parent bucket first. The converse holds too:
+    // free at a node means free at every descendant (nothing could have
+    // reached a deeper bucket without this one being occupied first). So
+    // for a single point, the occupied/free sequence from Root down is
+    // exactly "occupied...occupied, free...free" with one transition, and
+    // that transition is the correct acceptance level — reachable by
+    // climbing from the last-touched node instead of re-walking from Root.
+    private OctreeNode? _lastNode;
+
     public OctreeNode Root { get; }
     public long NodeCount => _nodeCount;
 
@@ -45,7 +59,7 @@ public sealed class SpacingIngestionEngine
             return;
         }
 
-        var node = Root;
+        var node = ClosestStartingNode(point);
         while (true)
         {
             double cellSize = node.Bbox.Size / _options.GridDivisions;
@@ -56,6 +70,7 @@ public sealed class SpacingIngestionEngine
             {
                 cells[key] = point;
                 node.PointCount++;
+                _lastNode = node;
                 return;
             }
 
@@ -71,12 +86,38 @@ public sealed class SpacingIngestionEngine
                 // just stays as-is.
                 _options.OnWarning?.Invoke(
                     $"Node {node.Id} hit max split depth {_options.MaxSplitDepth} resolving a spacing collision; dropping point.");
+                _lastNode = node;
                 return;
             }
 
             int octant = node.Bbox.Octant(point);
             node = EnsureChild(node, octant);
         }
+    }
+
+    // Finds the correct starting node for the descent loop: climb from the
+    // last-touched node toward Root only as long as cells keep coming back
+    // free, stopping at the first occupied ancestor (or Root). See the
+    // class-level comment on `_lastNode` for why this lands on the same
+    // node a fresh Root-down walk would eventually reach.
+    private OctreeNode ClosestStartingNode(in PointRecord point)
+    {
+        var node = _lastNode ?? Root;
+        while (!node.Bbox.Contains(point)) node = node.Parent!; // Root always contains any in-bounds point, so this always terminates
+
+        if (IsOccupied(node, point)) return node; // ancestors guaranteed occupied too (see proof above) — descend from here
+
+        while (node.Parent != null && !IsOccupied(node.Parent, point))
+            node = node.Parent;
+
+        return node;
+    }
+
+    private bool IsOccupied(OctreeNode node, in PointRecord point)
+    {
+        double cellSize = node.Bbox.Size / _options.GridDivisions;
+        var key = CellKey.FromPoint(point, node.Bbox, cellSize);
+        return _cache.Touch(node.Id, node.Bbox, cellSize).ContainsKey(key);
     }
 
     private OctreeNode EnsureChild(OctreeNode node, int octant)

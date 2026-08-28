@@ -131,6 +131,23 @@ which point is nearest a cell's center until the stream ends), and it keeps
 that point's own color rather than averaging the cell's points — arguably
 closer to real PotreeConverter's behavior.
 
+**Locality fast path.** Points don't have to walk from `Root` every time.
+A node's cell being occupied for a given point implies every ancestor's
+corresponding cell is occupied too — a child cell bucket always nests
+inside exactly one specific parent cell bucket (fixed by the cell-index
+arithmetic, independent of exact position within it), so whoever occupies
+that child bucket was necessarily rejected by that same parent bucket
+first. The converse holds too: a free cell at a node means every descendant
+is free as well (nothing could have reached a deeper bucket without this
+one being occupied first). So for a single point, the occupied/free
+sequence from `Root` down is exactly "occupied...occupied, free...free"
+with one transition, and that transition is the correct acceptance level —
+`ClosestStartingNode` finds it by climbing from the previous point's
+landing node (`_lastNode`) toward `Root` only as long as cells keep coming
+back free, stopping at the first occupied ancestor (or `Root`). No
+approximation: it lands on exactly the node a fresh `Root`-down walk would
+find, just without re-checking levels that don't need it.
+
 **Out-of-core via paging.** A point for any node — even one near the root —
 can arrive at any time until the stream ends, so no node's accepted-point
 set can be considered final and dropped mid-run. Instead, each node's

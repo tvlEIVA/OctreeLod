@@ -12,6 +12,35 @@ public class SpacingIngestionEngineTests : IDisposable
     private readonly List<NodePointFileStore> _stores = new List<NodePointFileStore>();
 
     [Fact]
+    public void LocalityFastPath_ClimbsToTheCorrectCoarserAncestor_NotJustRootOrLastNode()
+    {
+        // Root cellSize = 250 (bounds +-1000), L1 (root's child) cellSize =
+        // 125. A and B are identical -> A accepted at Root cell (4,4,4), B
+        // rejected there and accepted at L1 cell (0,0,0) (_lastNode = L1).
+        // D is a different point that ALSO maps to Root cell (4,4,4) (so
+        // Root is occupied for it too) but to a DIFFERENT, free L1 cell
+        // (1,1,1) -- the correct acceptance point for D is L1 itself,
+        // neither Root (occupied) nor anywhere deeper. This specifically
+        // exercises climbing exactly one level up from the cached node and
+        // stopping because the next ancestor is occupied, rather than
+        // always landing back on Root or staying stuck at the cached node.
+        var (engine, _, _) = MakeEngine(worldSize: 2000, gridDivisions: 8);
+
+        var repeated = new PointRecord(10, 10, 10, 0, 0, 0);
+        engine.IngestPoint(repeated); // accepted at Root
+        engine.IngestPoint(repeated); // same point -> rejected at Root, accepted at L1
+
+        engine.IngestPoint(new PointRecord(200, 200, 200, 0, 0, 0)); // D
+
+        var root = engine.Root;
+        Assert.Equal(1, root.PointCount); // D did NOT get (mis)accepted at Root
+        int octant = root.Bbox.Octant(repeated);
+        var l1 = root.Children[octant];
+        Assert.NotNull(l1);
+        Assert.Equal(2, l1!.PointCount); // B and D both accepted at L1
+    }
+
+    [Fact]
     public void TwoPointsInTheSameCell_OnlyFirstAcceptedAtThatNode_SecondDescendsToChild()
     {
         var (engine, _, _) = MakeEngine(worldSize: 100, gridDivisions: 4); // root cellSize = 25
