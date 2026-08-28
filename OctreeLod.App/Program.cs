@@ -14,15 +14,23 @@ namespace OctreeLod.App;
 public static class Program
 {
     private const string InputPath = @"D:\Data\full_laser_9_2_8_(WithHeader).xyz";
-    private const int BatchSize = 1500;
+    private const int BatchSize = 2500;
 
     // Toggle input source: true = geodetic lon/lat input, converted to local
     // ENU meters (LatLonPointCloudBatchSource, header row optional — set
     // LatLonHasHeader below). false = already-Cartesian easting/northing/depth
     // input, header row required (TextPointCloudBatchSource). Both take the
-    // same InputPath/BatchSize above.
+    // same InputPath/BatchSize above. Ignored when UseSyntheticSource is true.
     private const bool UseLatLonSource = false;
     private const bool LatLonHasHeader = true;
+
+    // Synthetic waving-surface dataset instead of reading InputPath at all —
+    // see WavingSurfacePointCloudBatchSource. AreaSize/PointSpacing below are
+    // sized for ~20M points (4501x4501).
+    private const bool UseSyntheticSource = true;
+    private const double SyntheticAreaSize = 9000.0;
+    private const double SyntheticPointSpacing = 2.0;
+    private const int SyntheticLinesPerBatch = 4;
 
     // Toggle between the legacy split+merge pipeline (OctreeIngestionEngine
     // + MergeEngine) and the spacing-based single-pass engine
@@ -36,12 +44,17 @@ public static class Program
         Directory.CreateDirectory(workDir);
         Console.WriteLine($"Working directory: {workDir}");
 
-        Console.WriteLine($"Reading points from: {InputPath}");
-
         IPointBatchSource source;
         GeoReference? reference = null;
-        if (UseLatLonSource)
+        if (UseSyntheticSource)
         {
+            var syntheticSource = new WavingSurfacePointCloudBatchSource(SyntheticAreaSize, SyntheticPointSpacing, SyntheticLinesPerBatch);
+            Console.WriteLine($"Synthetic waving surface: {syntheticSource.PointsPerLine:N0} x {syntheticSource.LineCount:N0} points ({syntheticSource.TotalPointCount:N0} total), {SyntheticLinesPerBatch} lines/batch.");
+            source = syntheticSource;
+        }
+        else if (UseLatLonSource)
+        {
+            Console.WriteLine($"Reading points from: {InputPath}");
             var latLonSource = new LatLonPointCloudBatchSource(InputPath, BatchSize, LatLonHasHeader);
             Console.WriteLine($"Centroid (reference point): lat={latLonSource.Reference.LatitudeDegrees:F6} lon={latLonSource.Reference.LongitudeDegrees:F6}");
             reference = latLonSource.Reference;
@@ -49,6 +62,7 @@ public static class Program
         }
         else
         {
+            Console.WriteLine($"Reading points from: {InputPath}");
             source = new TextPointCloudBatchSource(InputPath, BatchSize);
         }
         var batches = source.ReadBatches();
