@@ -5,7 +5,6 @@ using System.Text.Json;
 using OctreeLod.Core.Export;
 using OctreeLod.Core.Model;
 using OctreeLod.Core.SpacingEngine;
-using OctreeLod.Core.SplitMergeEngine.Merge;
 
 namespace OctreeLod.Tests;
 

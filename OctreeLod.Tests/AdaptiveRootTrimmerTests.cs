@@ -1,5 +1,4 @@
 using OctreeLod.Core.Model;
-using OctreeLod.Core.SplitMergeEngine.Merge;
 
 namespace OctreeLod.Tests;
 

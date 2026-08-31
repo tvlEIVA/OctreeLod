@@ -2,11 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
-using System.Threading.Tasks;
 using OctreeLod.Core.Export;
 using OctreeLod.Core.Model;
-using OctreeLod.Core.SplitMergeEngine.Ingest;
-using OctreeLod.Core.SplitMergeEngine.Merge;
+using OctreeLod.Core.SpacingEngine;
 
 namespace OctreeLod.Tests;
 
@@ -15,25 +13,20 @@ public class Tiles3DExporterTests : IDisposable
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "OctreeLodTests-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
-    public async Task ExportedTileset_ParsesAsValidJsonWithOnlyNonEmptyChildrenAndExistingContentFiles()
+    public void ExportedTileset_ParsesAsValidJsonWithOnlyNonEmptyChildrenAndExistingContentFiles()
     {
-        const int threshold = 100;
-        const int gridDivisions = 16;
-        var options = new OctreeIngestionOptions { SplitThreshold = threshold, MaxSplitDepth = 40 };
-        using var leafStore = new SlabPointStore(Path.Combine(_dir, "leaves.bin"), threshold);
-        var engine = new OctreeIngestionEngine(leafStore, options);
+        var options = new SpacingIngestionOptions { GridDivisions = 16, MaxSplitDepth = 40 };
+        using var nodeStore = new NodePointFileStore(Path.Combine(_dir, "nodes"));
+        var engine = new SpacingIngestionEngine(nodeStore, options);
 
         var random = new Random(21);
         engine.IngestBatch(MakeTwoClusterDataset(random));
-
-        using var mergedStore = new NodePointFileStore(Path.Combine(_dir, "merged"));
-        var mergeEngine = new MergeEngine(leafStore, mergedStore, gridDivisions, maxDegreeOfParallelism: 4);
-        await mergeEngine.MergeAsync(engine.Root);
+        engine.Flush();
 
         var logicalRoot = AdaptiveRootTrimmer.TrimToLogicalRoot(engine.Root);
 
         string outputDir = Path.Combine(_dir, "tiles-out");
-        Tiles3DExporter.Export(logicalRoot, mergedStore, gridDivisions, outputDir, TileRefine.Replace);
+        Tiles3DExporter.Export(logicalRoot, nodeStore, options.GridDivisions, outputDir, TileRefine.Add);
 
         string tilesetPath = Path.Combine(outputDir, "tileset.json");
         Assert.True(File.Exists(tilesetPath));
@@ -43,7 +36,7 @@ public class Tiles3DExporterTests : IDisposable
 
         Assert.Equal("1.0", root.GetProperty("asset").GetProperty("version").GetString());
         var rootTile = root.GetProperty("root");
-        Assert.Equal("REPLACE", rootTile.GetProperty("refine").GetString());
+        Assert.Equal("ADD", rootTile.GetProperty("refine").GetString());
 
         int visitedTiles = 0;
         double parentGeometricError = double.PositiveInfinity;
@@ -54,26 +47,32 @@ public class Tiles3DExporterTests : IDisposable
     [Fact]
     public void SingleLeafRoot_ExportsOneTileWithNoChildren()
     {
-        const int threshold = 1000;
-        var options = new OctreeIngestionOptions { SplitThreshold = threshold };
-        using var leafStore = new SlabPointStore(Path.Combine(_dir, "leaves2.bin"), threshold);
-        var engine = new OctreeIngestionEngine(leafStore, options);
+        // Well-separated points (300 units apart, comfortably clear of the
+        // 250-unit root cell size) so every point is accepted directly at
+        // Root and nothing overflows into a child — mirrors
+        // SpacingIngestionEngineTests' WellSeparatedPoints scenario.
+        var options = new SpacingIngestionOptions
+        {
+            WorldBounds = new BoundingCube(-1000, -1000, -1000, 2000),
+            GridDivisions = 8,
+        };
+        using var nodeStore = new NodePointFileStore(Path.Combine(_dir, "nodes2"));
+        var engine = new SpacingIngestionEngine(nodeStore, options);
 
         var random = new Random(5);
-        var points = new List<PointRecord>();
-        for (int i = 0; i < 50; i++)
-            points.Add(new PointRecord(random.NextDouble(), random.NextDouble(), random.NextDouble(), 1, 2, 3));
-        engine.IngestBatch(points);
-
-        using var mergedStore = new NodePointFileStore(Path.Combine(_dir, "merged2"));
+        for (int i = 0; i < 4; i++)
+        {
+            engine.IngestPoint(new PointRecord(
+                i * 300.0, i * 300.0, i * 300.0,
+                (byte)random.Next(256), (byte)random.Next(256), (byte)random.Next(256)));
+        }
+        engine.Flush();
 
         var logicalRoot = AdaptiveRootTrimmer.TrimToLogicalRoot(engine.Root);
-        Assert.True(logicalRoot.IsLeaf); // never overflowed, single leaf for the whole tree
-
-        mergedStore.WriteAll(logicalRoot.Id, leafStore.ReadAll(logicalRoot.Storage, (int)logicalRoot.PointCount));
+        Assert.True(logicalRoot.IsLeaf); // all well-separated, nothing pushed to a child
 
         string outputDir = Path.Combine(_dir, "tiles-out2");
-        Tiles3DExporter.Export(logicalRoot, mergedStore, gridDivisions: 16, outputDir, TileRefine.Replace);
+        Tiles3DExporter.Export(logicalRoot, nodeStore, options.GridDivisions, outputDir, TileRefine.Add);
 
         using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(outputDir, "tileset.json")));
         var rootTile = doc.RootElement.GetProperty("root");

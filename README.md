@@ -3,133 +3,69 @@
 Out-of-core streaming octree LOD builder for point clouds, exporting to
 [3D Tiles](https://github.com/CesiumGS/3d-tiles) (legacy `.pnts` content).
 
-Points arrive in batches (never all in memory at once) and are streamed
-straight into an octree on disk. Once ingestion finishes, a bottom-up merge
-pass builds a level-of-detail pyramid, which is then exported as a
-`tileset.json` + `.pnts` dataset.
+Points arrive in batches (never all in memory at once) and stream straight
+into an octree on disk. LOD membership is decided per point, at insertion
+time (PotreeConverter-style spacing rule) — there's no separate merge pass;
+the tree is exportable as a `tileset.json` + `.pnts` dataset the moment
+ingestion finishes, and even mid-ingestion for a live preview (see below).
 
 ## Project layout
 
 - **`OctreeLod.Core`** (netstandard2.0 — usable from a .NET Framework 4.7.3
-  host) — all algorithm logic. Two independent engines sit side by side,
-  each its own top-level folder/namespace root, sharing only `Model` and
-  `Export`:
-  - **`Model/`** — phase-agnostic types shared by both engines:
-    `PointRecord`, `BoundingCube`, `OctreeNode`, `StorageLocator`, `CellKey`,
-    `OctreeStructureUtil` (the shared "is this child empty" rule), and
+  host) — all algorithm logic.
+  - **`Model/`** — shared types: `PointRecord`, `BoundingCube`, `OctreeNode`,
+    `StorageLocator`, `CellKey`, `OctreeStructureUtil` (the "is this child
+    empty" rule), `AdaptiveRootTrimmer` (collapses single-child wrapper
+    levels down to the real branching root), and
     `INodePointStore`/`NodePointFileStore` — the out-of-core per-node point
-    store both engines write their final/paged output through (deliberately
-    generic, not "merged" — the spacing engine has no merge phase and uses
-    it purely to page nodes to disk mid-ingest). `OctreeNode` is a real
-    reference-type tree node — `Parent`/`Children[8]` are direct object
-    references, so the whole tree is reachable from just the root (an
-    engine exposes `Root`, nothing else — no separate metadata store or
+    store the engine pages nodes to disk through mid-ingest. `OctreeNode` is
+    a real reference-type tree node — `Parent`/`Children[8]` are direct
+    object references, so the whole tree is reachable from just the root
+    (the engine exposes `Root`, nothing else — no separate metadata store or
     id-indexed list). Every node still carries a stable `Id`, but only as an
-    external handle: `INodePointStore` keys on-disk point data by it, and
-    3D Tiles export uses it as the content filename (`{id}.pnts`) — it
-    plays no role in in-memory traversal. `Id` is derived from position, not
-    a counter: root = 0, child = `parent.Id * 8 + octant + 1` (standard
-    complete-8-ary-tree indexing — same arithmetic a binary heap uses,
-    generalized from 2 children to 8). Deterministic and collision-free by
-    construction, but the id needs ~3 bits per depth level, and both
-    engines' `MaxSplitDepth` defaults to 60 — 180 bits at that depth, well
+    external handle: `INodePointStore` keys on-disk point data by it, and 3D
+    Tiles export uses it (with `ContentVersion`) as the content filename
+    (`{id}_v{version}.pnts`) — it plays no role in in-memory traversal. `Id`
+    is derived from position, not a counter: root = 0, child = `parent.Id *
+    8 + octant + 1` (standard complete-8-ary-tree indexing — same arithmetic
+    a binary heap uses, generalized from 2 children to 8). Deterministic and
+    collision-free by construction, but the id needs ~3 bits per depth
+    level, and `MaxSplitDepth` defaults to 60 — 180 bits at that depth, well
     past a 64-bit range — so `Id` is `System.Numerics.BigInteger`, not
     `long`.
-  - **`SplitMergeEngine/`** — the legacy two-phase engine, dependencies flow
-    one way: phase 1 → phase 2, each only ever referencing the one before.
-    - **`Ingest/`** — phase 1: `OctreeIngestionEngine` (streaming split
-      cascade), `SlabPointStore` (on-disk leaf buffers), ingest options.
-    - **`Merge/`** — phase 2: `MergeEngine`, `GridSubsampler`,
-      `AdaptiveRootTrimmer`. Reads leaf data via `Ingest`'s
-      `IPointBufferStore`, writes through `Model`'s `INodePointStore`.
-  - **`SpacingEngine/`** — the spacing-based engine:
-    `SpacingIngestionEngine`, ingest options. Single streaming pass, no
-    merge phase — see "Spacing-based engine" below. Reuses `Model`'s
-    `INodePointStore`/`NodePointFileStore` (for out-of-core node paging, not
-    a merge) and `SplitMergeEngine`'s `AdaptiveRootTrimmer`, so it shares
-    `Export` with the legacy pipeline unchanged.
-  - **`Export/`** — `Tiles3DExporter` (`TileRefine.Replace`/`.Add`, caller
-    picks — see below), `PntsWriter`, `MinimalJsonWriter`. Reads
-    representative point sets via `Model`'s `INodePointStore`.
-- **`OctreeLod.App`** (net8.0) — console entry point. Runs all three stages;
-  input-format-specific reading lives in its own `Sources/` folder
-  (`IPointBatchSource` implementations) so a different file format is a new
-  class there, not a change to the pipeline. Two so far:
-  `TextPointCloudBatchSource` (already-Cartesian easting/northing/depth) and
-  `LatLonPointCloudBatchSource` (geodetic lon/lat/height, auto-converted to
-  local ENU meters — see Input formats below).
+  - **`SpacingEngine/`** — `SpacingIngestionEngine`, ingest options. Single
+    streaming pass, no merge phase — see "How it works" below.
+  - **`Export/`** — `Tiles3DExporter` (`TileRefine.Add`/`.Replace`, caller
+    picks), `PntsWriter`, `MinimalJsonWriter`. Reads representative point
+    sets via `Model`'s `INodePointStore`.
+- **`OctreeLod.App`** (net8.0) — console entry point. Input-format-specific
+  reading lives in its own `Sources/` folder (`IPointBatchSource`
+  implementations) so a different file format is a new class there, not a
+  change to the pipeline: `TextPointCloudBatchSource` (already-Cartesian
+  easting/northing/depth), `LatLonPointCloudBatchSource` (geodetic
+  lon/lat/height, auto-converted to local ENU meters — see Input formats
+  below), and `WavingSurfacePointCloudBatchSource` (synthetic undulating
+  test surface, color-by-elevation, for exercising the pipeline without a
+  real input file).
 - **`OctreeLod.Tests`** (net8.0, xUnit) — unit + end-to-end tests.
 
 ## How it works
 
-**Phase 1 — streaming ingest.** Points descend a fixed-bounds octree
-(`OctreeIngestionOptions.WorldBounds`, generous enough to contain any
-realistic dataset without needing to know the real extent up front). Each
-leaf buffers points on disk; once a leaf reaches `SplitThreshold` points, it
-splits into 8 children and its buffered points are redistributed —
-immediately, mid-stream, not deferred to the end. RAM only ever holds the
-tree's metadata (bbox/parent/children/counts, not point data) plus whatever
-single leaf is mid-split at that instant.
-
-**Phase 2 — bottom-up merge.** Every node's representative point set is
-computed post-order: leaves keep their raw points verbatim; internal nodes
-combine their children's (already-merged) sets and grid-subsample them —
-one representative point per occupied cell, position = nearest real sample
-to the cell center, color = average of the cell's points. Nodes that only
-wrap a single real branch (an artifact of starting from a generous fixed
-world bound) are structurally elided so the exported tileset doesn't carry
-dozens of near-empty wrapper levels.
-
-**Export.** Walks the (trimmed) tree and writes one `.pnts` file per node
-plus a `tileset.json` describing the hierarchy (`box` bounding volumes,
-`geometricError` derived from grid cell size). Refine mode is caller-chosen
-via `Tiles3DExporter.Export`'s `TileRefine` parameter — `REPLACE` for this
-pipeline, since `GridSubsampler` gives every level a spatially-complete
-(if coarse) sample of its whole footprint, safe to swap in place of its
-children. (The spacing engine below produces the opposite shape — a node's
-content is only what its children didn't already capture — and always
-exports `ADD`.) Each
-`.pnts` stores positions as `RTC_CENTER`-relative float32 offsets, so
-precision holds up even far from the coordinate origin. Optionally pass a
-`GeoReference` (lat/lon/height) to `Tiles3DExporter.Export` to anchor the
-local East/North/Up frame to a real spot on the WGS84 ellipsoid — this
-writes a root `transform` (local → ECEF) so 3D Tiles viewers (Cesium,
-deck.gl) place the dataset on the globe instead of defaulting to
-ECEF-interpreted raw local coordinates, which for typical local-frame
-magnitudes lands the whole dataset a few hundred km from Earth's center —
-nowhere near the surface. The ingestion/merge pipeline itself stays
-coordinate-agnostic (still just X/Y/Z meters); georeferencing is purely an
-export-time concern.
-
-## Spacing-based engine (PotreeConverter-style)
-
-`SpacingIngestionEngine` is a second, alternate engine (`OctreeLod.Core/SpacingEngine/`)
-implementing the LOD rule real PotreeConverter uses: a point is accepted
-into the first node — walking down from root — where it lands in a still-
-unoccupied voxel cell of that node's own spacing (`cellSize =
-node.Bbox.Size / GridDivisions`, same formula and constant `GridSubsampler`
-uses, so a cell doubles in size every level up same as the legacy engine's
-grid). If the cell is already taken, the point is pushed into the correct
-child — created lazily, one octant at a time, only when actually needed —
-and the check repeats one level down. Unlike the legacy engine's fixed
-`SplitThreshold`-per-leaf split, this decides *which level a point belongs
-at* per point, at insertion time.
+`SpacingIngestionEngine` implements the LOD rule real PotreeConverter uses:
+a point is accepted into the first node — walking down from root — where it
+lands in a still-unoccupied voxel cell of that node's own spacing
+(`cellSize = node.Bbox.Size / GridDivisions`, so a cell doubles in size
+every level up). If the cell is already taken, the point is pushed into the
+correct child — created lazily, one octant at a time, only when actually
+needed — and the check repeats one level down. This decides *which level a
+point belongs at* per point, at insertion time.
 
 Because LOD membership is decided during ingestion itself, there's **no
 merge phase** — every node's accepted-point set already is its final
-representative content the moment ingestion finishes. `AdaptiveRootTrimmer`
-+ `Tiles3DExporter` are reused completely unchanged from the legacy
-pipeline, reading node content through the same `INodePointStore`
-interface the legacy engine's merge phase writes — the constructor takes
-this store directly, since paging needs disk access *during* ingest, not
-just at the end, and `Program.cs` names its directory `nodes/`, not
-`merged/`, since nothing is actually merged here.
-
-One real difference from the legacy engine's `GridSubsampler`: a cell's
+representative content the moment ingestion finishes. A cell's
 representative point is whichever point reached it *first* (no way to know
 which point is nearest a cell's center until the stream ends), and it keeps
-that point's own color rather than averaging the cell's points — arguably
-closer to real PotreeConverter's behavior.
+that point's own color rather than averaging the cell's points.
 
 **Locality fast path.** Points don't have to walk from `Root` every time.
 A node's cell being occupied for a given point implies every ancestor's
@@ -170,8 +106,36 @@ more distinct deep nodes than fit in the cache would thrash). Real
 PotreeConverter 2.0 avoids paging entirely with a two-pass chunked/
 external-sort indexer; that's a bigger lift, out of scope here.
 
-Toggle it on in `OctreeLod.App/Program.cs` via the `UseSpacingEngine`
-constant at the top of the file.
+**Export.** Walks the (trimmed) tree and writes one `content/{id}_v{n}.pnts`
+file per changed node plus a `tileset.json` describing the hierarchy (`box`
+bounding volumes, `geometricError` derived from grid cell size). Refine mode
+is always `ADD`: a node's content is only what its children didn't already
+capture, so a child adds finer detail on top of its parent rather than
+replacing it. Content filenames are versioned (`OctreeNode.ContentVersion`,
+bumped on every rewrite) rather than overwritten in place, so a
+`tileset.json` already handed to a client keeps pointing at valid,
+unchanged bytes forever — a rewritten node just gets a new `_v{n+1}.pnts`
+file, never touching the old one. Each `.pnts` stores positions as
+`RTC_CENTER`-relative float32 offsets, so precision holds up even far from
+the coordinate origin. Optionally pass a `GeoReference` (lat/lon/height) to
+`Tiles3DExporter.Export` to anchor the local East/North/Up frame to a real
+spot on the WGS84 ellipsoid — this writes a root `transform` (local → ECEF)
+so 3D Tiles viewers (Cesium, deck.gl) place the dataset on the globe instead
+of defaulting to ECEF-interpreted raw local coordinates, which for typical
+local-frame magnitudes lands the whole dataset a few hundred km from Earth's
+center — nowhere near the surface. Ingestion itself stays coordinate-agnostic
+(still just X/Y/Z meters); georeferencing is purely an export-time concern.
+
+**Live preview.** `RunSpacingEngineWithPreviewAsync` (the default in
+`Program.cs`, toggle via `UseLivePreview`) periodically re-exports the tree
+mid-ingestion — each pass writes its own `tileset_preview_NNNN.json` rather
+than overwriting one shared file, so every snapshot stays on disk and a
+client can keep several loaded at once. A pass triggers once
+`PreviewDirtyNodeThreshold` nodes have changed since the last one (not on a
+fixed timer — that let a slow pass's backlog compound into the next one),
+and runs on a background thread against a cheap in-memory snapshot of the
+tree taken at trigger time, so it never blocks ingestion and always reflects
+the octree exactly as of that moment.
 
 ## Input formats
 
@@ -204,7 +168,7 @@ pipeline works in ordinary Cartesian meters as usual. `source.Reference`
 exposes the computed centroid; pass it straight to
 `Tiles3DExporter.Export(..., source.Reference)` so the tileset gets a root
 `transform` placing it back at the correct real-world location (see
-Georeferencing below).
+Georeferencing above).
 
 ## Running
 
@@ -234,13 +198,12 @@ dotnet test OctreeLod.Tests/OctreeLod.Tests.csproj
 
 | Knob | Where | Effect |
 |---|---|---|
-| `SplitThreshold` | `OctreeIngestionOptions` | Max points per leaf before it splits. Also bounds per-split memory/IO. |
-| `MaxSplitDepth` | `OctreeIngestionOptions` | Guard against pathological (near-)duplicate point clusters that can never be spatially separated. |
-| `WorldBounds` | `OctreeIngestionOptions` | Fixed root extent — must comfortably contain the real data. |
-| `gridDivisions` | `MergeEngine` / `Tiles3DExporter` (must match between the two calls) | Cells per bbox edge during subsampling. Smaller → stronger compression, chunkier LOD steps; larger → smoother LOD, weaker compression. Currently a plain literal (`64`) at each call site in `Program.cs`, not derived from `SplitThreshold`. |
-| `UseSpacingEngine` | `Program.cs` | Switches between the legacy split+merge pipeline and the spacing-based single-pass engine. |
-| `SpacingIngestionOptions.GridDivisions` | `SpacingIngestionOptions` | Same role as `gridDivisions` above, but for the spacing engine — read directly at both ingest and export time (no separate merge call to keep in sync). |
+| `SpacingIngestionOptions.GridDivisions` | `SpacingIngestionOptions` | Cells per bbox edge when computing a node's spacing threshold. Smaller → stronger compression, chunkier LOD steps; larger → smoother LOD, weaker compression. Read directly at both ingest and export time (no separate merge call to keep in sync). |
+| `SpacingIngestionOptions.MaxSplitDepth` | `SpacingIngestionOptions` | Guard against pathological (near-)duplicate point clusters that can never be spatially separated. |
+| `SpacingIngestionOptions.WorldBounds` | `SpacingIngestionOptions` | Fixed root extent — must comfortably contain the real data. |
 | `SpacingIngestionOptions.MaxInMemoryNodes` | `SpacingIngestionOptions` | Out-of-core bound: max node point-sets held in RAM at once (LRU-paged to disk). Smaller → less RAM, more disk I/O from evict/reload thrashing on scattered input; larger → more RAM, fewer reloads. |
+| `UseLivePreview` | `Program.cs` | Switches between a plain single final export and periodic preview exports mid-ingestion. |
+| `PreviewDirtyNodeThreshold` | `Program.cs` | How many changed nodes trigger the next preview pass. |
 
 ## Known limitations / not yet built
 
@@ -254,11 +217,7 @@ dotnet test OctreeLod.Tests/OctreeLod.Tests.csproj
   across, increasingly distorted at continental scale (should switch to
   per-point ECEF conversion, or tile-local reference points, if that's ever
   needed).
-- `leaves.bin` and the `merged/` folder (legacy pipeline) and the `nodes/`
-  folder (spacing engine) are scratch space; nothing downstream reads them
-  again once the 3D Tiles export has run, so they're safe to delete.
+- The `nodes/` folder is scratch space; nothing downstream reads it again
+  once the 3D Tiles export has run, so it's safe to delete.
 - No crash-recovery checkpointing during a long ingest run (in-memory
   metadata is lost if the process dies mid-run).
-- `gridDivisions` is a manually-kept-in-sync literal, not a single shared
-  constant — a mismatch between the merge and export calls would silently
-  corrupt exported `geometricError` values.

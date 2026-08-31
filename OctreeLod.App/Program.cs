@@ -6,8 +6,6 @@ using OctreeLod.App.Sources;
 using OctreeLod.Core.Export;
 using OctreeLod.Core.Model;
 using OctreeLod.Core.SpacingEngine;
-using OctreeLod.Core.SplitMergeEngine.Ingest;
-using OctreeLod.Core.SplitMergeEngine.Merge;
 
 namespace OctreeLod.App;
 
@@ -28,17 +26,11 @@ public static class Program
     // see WavingSurfacePointCloudBatchSource. AreaSize/PointSpacing below are
     // sized for ~20M points (4501x4501).
     private const bool UseSyntheticSource = true;
-    private const double SyntheticAreaSize = 40000.0;
+    private const double SyntheticAreaSize = 30000.0;
     private const double SyntheticPointSpacing = 2.0;
     private const int SyntheticLinesPerBatch = 4;
 
-    // Toggle between the legacy split+merge pipeline (OctreeIngestionEngine
-    // + MergeEngine) and the spacing-based single-pass engine
-    // (SpacingIngestionEngine) — see README "How it works" for the
-    // difference.
-    private const bool UseSpacingEngine = true;
-
-    // Spacing engine only: run RunSpacingEngineWithPreviewAsync instead of
+    // Run RunSpacingEngineWithPreviewAsync instead of
     // plain RunSpacingEngineAsync — periodically re-exports tileset.json +
     // content mid-ingestion (point tilesDir's tileset.json at a viewer for a
     // live preview). Since the spacing engine has no separate merge phase,
@@ -87,65 +79,10 @@ public static class Program
         }
         var batches = source.ReadBatches();
 
-        if (UseSpacingEngine)
-        {
-            if (UseLivePreview)
-                await RunSpacingEngineWithPreviewAsync(workDir, reference, batches);
-            else
-                await RunSpacingEngineAsync(workDir, reference, batches);
-        }
+        if (UseLivePreview)
+            await RunSpacingEngineWithPreviewAsync(workDir, reference, batches);
         else
-        {
-            await RunLegacyPipelineAsync(workDir, reference, batches);
-        }
-    }
-
-    private static async Task RunLegacyPipelineAsync(string workDir, GeoReference? reference, IEnumerable<IReadOnlyList<PointRecord>> batches)
-    {
-        var options = new OctreeIngestionOptions
-        {
-            SplitThreshold = 1000,
-            OnWarning = msg => Console.WriteLine($"[warn] {msg}"),
-        };
-
-        using var leafStore = new SlabPointStore(Path.Combine(workDir, "leaves.bin"), options.SplitThreshold);
-        var engine = new OctreeIngestionEngine(leafStore, options);
-
-        Console.WriteLine("Phase 1: streaming ingest...");
-        long totalPoints = 0;
-        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-        long lastReportMs = 0;
-        foreach (var batch in batches)
-        {
-            engine.IngestBatch(batch);
-            totalPoints += batch.Count;
-
-            if (stopwatch.ElapsedMilliseconds - lastReportMs >= 500)
-            {
-                double rate = totalPoints / stopwatch.Elapsed.TotalSeconds;
-                Console.Write($"\r  {totalPoints:N0} points | {engine.NodeCount:N0} nodes | {rate:N0} pts/sec | {stopwatch.Elapsed:hh\\:mm\\:ss}   ");
-                lastReportMs = stopwatch.ElapsedMilliseconds;
-            }
-        }
-        Console.WriteLine();
-        Console.WriteLine($"Ingested {totalPoints:N0} points into {engine.NodeCount:N0} nodes in {stopwatch.Elapsed:hh\\:mm\\:ss}.");
-
-        Console.WriteLine("Phase 2: bottom-up merge...");
-        using var mergedStore = new NodePointFileStore(Path.Combine(workDir, "merged"));
-        var mergeEngine = new MergeEngine(leafStore, mergedStore, gridDivisions: 64, maxDegreeOfParallelism: Environment.ProcessorCount);
-        await mergeEngine.MergeAsync(engine.Root);
-
-        var logicalRoot = AdaptiveRootTrimmer.TrimToLogicalRoot(engine.Root);
-        var rootPoints = mergedStore.ReadAll(logicalRoot.Id);
-
-        Console.WriteLine($"True geometric root id: {engine.Root.Id}");
-        Console.WriteLine($"Logical (emitted) root id: {logicalRoot.Id}, representative point count: {rootPoints.Length}");
-        Console.WriteLine($"Logical root bbox: min=({logicalRoot.Bbox.MinX:F1},{logicalRoot.Bbox.MinY:F1},{logicalRoot.Bbox.MinZ:F1}) size={logicalRoot.Bbox.Size:F1}");
-
-        Console.WriteLine("Exporting 3D Tiles dataset...");
-        string tilesDir = Path.Combine(workDir, "3dtiles");
-        Tiles3DExporter.Export(logicalRoot, mergedStore, gridDivisions: 64, tilesDir, TileRefine.Replace, reference);
-        Console.WriteLine($"3D Tiles dataset written to: {tilesDir}");
+            await RunSpacingEngineAsync(workDir, reference, batches);
     }
 
     private static Task RunSpacingEngineAsync(string workDir, GeoReference? reference, IEnumerable<IReadOnlyList<PointRecord>> batches)

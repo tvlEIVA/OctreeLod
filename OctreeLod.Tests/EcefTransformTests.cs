@@ -3,7 +3,7 @@ using System.IO;
 using System.Text.Json;
 using OctreeLod.Core.Export;
 using OctreeLod.Core.Model;
-using OctreeLod.Core.SplitMergeEngine.Ingest;
+using OctreeLod.Core.SpacingEngine;
 
 namespace OctreeLod.Tests;
 
@@ -72,11 +72,11 @@ public class EcefTransformTests : IDisposable
     [Fact]
     public void NoGeoReference_TilesetHasNoTransform()
     {
-        var (root, mergedStore) = BuildTinySingleNodeTree();
-        using var disposeMergedStore = mergedStore;
+        var (root, nodeStore) = BuildTinySingleNodeTree();
+        using var disposeNodeStore = nodeStore;
         string outputDir = Path.Combine(_dir, "no-geo");
 
-        Tiles3DExporter.Export(root, mergedStore, gridDivisions: 8, outputDir, TileRefine.Replace);
+        Tiles3DExporter.Export(root, nodeStore, gridDivisions: 8, outputDir, TileRefine.Add);
 
         using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(outputDir, "tileset.json")));
         Assert.False(doc.RootElement.GetProperty("root").TryGetProperty("transform", out _));
@@ -84,11 +84,11 @@ public class EcefTransformTests : IDisposable
 
     private double[] ExportAndReadTransform(GeoReference reference)
     {
-        var (root, mergedStore) = BuildTinySingleNodeTree();
-        using var disposeMergedStore = mergedStore;
+        var (root, nodeStore) = BuildTinySingleNodeTree();
+        using var disposeNodeStore = nodeStore;
         string outputDir = Path.Combine(_dir, Guid.NewGuid().ToString("N"));
 
-        Tiles3DExporter.Export(root, mergedStore, gridDivisions: 8, outputDir, TileRefine.Replace, reference);
+        Tiles3DExporter.Export(root, nodeStore, gridDivisions: 8, outputDir, TileRefine.Add, reference);
 
         using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(outputDir, "tileset.json")));
         var transformElement = doc.RootElement.GetProperty("root").GetProperty("transform");
@@ -98,18 +98,15 @@ public class EcefTransformTests : IDisposable
         return matrix;
     }
 
-    private (OctreeNode root, NodePointFileStore mergedStore) BuildTinySingleNodeTree()
+    private (OctreeNode root, NodePointFileStore nodeStore) BuildTinySingleNodeTree()
     {
-        const int threshold = 100;
-        var options = new OctreeIngestionOptions { SplitThreshold = threshold };
-        using var leafStore = new SlabPointStore(Path.Combine(_dir, Guid.NewGuid().ToString("N") + ".bin"), threshold);
-        var engine = new OctreeIngestionEngine(leafStore, options);
+        var options = new SpacingIngestionOptions { GridDivisions = 8 };
+        var nodeStore = new NodePointFileStore(Path.Combine(_dir, Guid.NewGuid().ToString("N")));
+        var engine = new SpacingIngestionEngine(nodeStore, options);
         engine.IngestPoint(new PointRecord(1, 1, 1, 100, 50, 200));
+        engine.Flush();
 
-        var mergedStore = new NodePointFileStore(Path.Combine(_dir, Guid.NewGuid().ToString("N")));
-        mergedStore.WriteAll(engine.Root.Id, leafStore.ReadAll(engine.Root.Storage, 1));
-
-        return (engine.Root, mergedStore);
+        return (engine.Root, nodeStore);
     }
 
     private static void AssertUnitLength(double x, double y, double z) =>
