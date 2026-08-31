@@ -34,8 +34,19 @@ public sealed class SpacingIngestionEngine
     // climbing from the last-touched node instead of re-walking from Root.
     private OctreeNode? _lastNode;
 
+    // Count of currently-dirty nodes (OctreeNode.Dirty == true) — tracked
+    // incrementally rather than by walking the tree, so a caller (a preview
+    // exporter deciding when enough new work has piled up to be worth a
+    // pass) can check it in O(1). Goes up on every false->true Dirty
+    // transition (a brand-new node, or an existing clean node accepting
+    // another point); an external caller who clears some nodes' Dirty flags
+    // back to false (see Tiles3DExporter/OctreeNode.Dirty) reports that back
+    // via NotifyNodesClean so the count stays accurate.
+    private long _dirtyNodeCount;
+
     public OctreeNode Root { get; }
     public long NodeCount => _nodeCount;
+    public long DirtyNodeCount => _dirtyNodeCount;
 
     public SpacingIngestionEngine(INodePointStore nodeStore, SpacingIngestionOptions options)
     {
@@ -44,6 +55,7 @@ public sealed class SpacingIngestionEngine
 
         Root = OctreeNode.CreateRoot(options.WorldBounds);
         _nodeCount = 1;
+        _dirtyNodeCount = 1; // Root starts Dirty (see OctreeNode)
     }
 
     public void IngestBatch(IEnumerable<PointRecord> points)
@@ -70,6 +82,7 @@ public sealed class SpacingIngestionEngine
             {
                 cells[key] = point;
                 node.PointCount++;
+                if (!node.Dirty) { node.Dirty = true; _dirtyNodeCount++; }
                 _lastNode = node;
                 return;
             }
@@ -128,6 +141,7 @@ public sealed class SpacingIngestionEngine
         var childBbox = node.Bbox.ChildBounds(octant);
         child = OctreeNode.CreateChild(node, octant, childBbox);
         _nodeCount++;
+        _dirtyNodeCount++; // new node starts Dirty (see OctreeNode)
 
         node.IsLeaf = false;
         node.Children[octant] = child;
@@ -138,4 +152,15 @@ public sealed class SpacingIngestionEngine
     // Persists whatever's still in memory in the cache once the stream ends
     // — everything already evicted mid-run is on disk already.
     public void Flush() => _cache.Flush();
+
+    // Called by a preview exporter after it clears some nodes' Dirty flags
+    // back to false (see PreviewExporter.dirtyPairs), so DirtyNodeCount
+    // stays accurate for the next threshold check. Clamped at zero: a node
+    // ingestion re-dirtied concurrently, between the exporter reading its
+    // snapshot and clearing it, was already counted again by IngestPoint's
+    // own increment — this call must not double-subtract it.
+    public void NotifyNodesClean(long count)
+    {
+        _dirtyNodeCount = System.Math.Max(0, _dirtyNodeCount - count);
+    }
 }

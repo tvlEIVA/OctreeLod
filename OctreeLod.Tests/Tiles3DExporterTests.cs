@@ -80,7 +80,7 @@ public class Tiles3DExporterTests : IDisposable
 
         Assert.Equal(0, rootTile.GetProperty("geometricError").GetDouble());
         Assert.False(rootTile.TryGetProperty("children", out _));
-        Assert.True(File.Exists(Path.Combine(outputDir, "content", $"{logicalRoot.Id}.pnts")));
+        Assert.True(File.Exists(Path.Combine(outputDir, "content", $"{logicalRoot.Id}_v1.pnts")));
     }
 
     private static void WalkAndVerify(JsonElement tile, string outputDir, ref int visitedCount, double parentGeometricError)

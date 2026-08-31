@@ -1,8 +1,9 @@
 using System;
-using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Numerics;
 using System.Text;
+using System.Threading;
 
 namespace OctreeLod.Core.Model;
 
@@ -16,44 +17,69 @@ namespace OctreeLod.Core.Model;
 // its previous bytes rather than reclaiming them — no compaction. Acceptable
 // for scratch space that's deleted once the run's done; not meant for a
 // long-lived store under heavy rewrite churn.
+//
+// One write FileStream plus one read FileStream PER THREAD that calls
+// ReadAll, instead of a single shared read handle behind a lock. Because
+// the file is append-only and a node's bytes are never mutated once
+// written, any number of independent read handles can seek/read
+// concurrently with no coordination needed at all — they're just looking
+// at complete, immutable bytes, each through its own OS file handle and
+// position. A single shared read handle+lock was serializing every
+// ReadAll to one at a time, which capped a parallel preview export's
+// throughput on the read side even though its writes (each to a distinct
+// .pnts file) ran fully concurrently — this removes that ceiling. Only
+// _writeFile still needs a lock: MergeEngine calls WriteAll from multiple
+// threads concurrently (maxDegreeOfParallelism), and unlike reads, writes
+// share one growing append position that genuinely must be serialized.
 public sealed class NodePointFileStore : INodePointStore, IDisposable
 {
-    private readonly FileStream _file;
-    private readonly Dictionary<BigInteger, (long Offset, int Count)> _index = new Dictionary<BigInteger, (long Offset, int Count)>();
+    private readonly string _path;
+    private readonly FileStream _writeFile;
+    private readonly object _writeLock = new object();
+    private readonly ThreadLocal<FileStream> _readFile;
+    private readonly ConcurrentDictionary<BigInteger, (long Offset, int Count)> _index = new ConcurrentDictionary<BigInteger, (long Offset, int Count)>();
 
     public NodePointFileStore(string directory)
     {
         Directory.CreateDirectory(directory);
-        string path = Path.Combine(directory, "nodes.bin");
-        _file = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 4096, FileOptions.RandomAccess);
+        _path = Path.Combine(directory, "nodes.bin");
+        _writeFile = new FileStream(_path, FileMode.Create, FileAccess.Write, FileShare.ReadWrite, 4096, FileOptions.RandomAccess);
+        _readFile = new ThreadLocal<FileStream>(
+            () => new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096, FileOptions.RandomAccess),
+            trackAllValues: true);
     }
 
     public void WriteAll(BigInteger nodeId, PointRecord[] points)
     {
-        long offset = _file.Length;
-        _file.Seek(offset, SeekOrigin.Begin);
-        using (var writer = new BinaryWriter(_file, Encoding.UTF8, leaveOpen: true))
+        lock (_writeLock)
         {
-            foreach (var p in points)
+            long offset = _writeFile.Length;
+            _writeFile.Seek(offset, SeekOrigin.Begin);
+            using (var writer = new BinaryWriter(_writeFile, Encoding.UTF8, leaveOpen: true))
             {
-                writer.Write(p.X);
-                writer.Write(p.Y);
-                writer.Write(p.Z);
-                writer.Write(p.R);
-                writer.Write(p.G);
-                writer.Write(p.B);
+                foreach (var p in points)
+                {
+                    writer.Write(p.X);
+                    writer.Write(p.Y);
+                    writer.Write(p.Z);
+                    writer.Write(p.R);
+                    writer.Write(p.G);
+                    writer.Write(p.B);
+                }
             }
+            _writeFile.Flush(); // push past the FileStream's own buffer so _readFile's independent handle can see these bytes
+            _index[nodeId] = (offset, points.Length);
         }
-        _index[nodeId] = (offset, points.Length);
     }
 
     public PointRecord[] ReadAll(BigInteger nodeId)
     {
         if (!_index.TryGetValue(nodeId, out var entry)) return Array.Empty<PointRecord>();
 
+        var file = _readFile.Value!;
         var result = new PointRecord[entry.Count];
-        _file.Seek(entry.Offset, SeekOrigin.Begin);
-        using (var reader = new BinaryReader(_file, Encoding.UTF8, leaveOpen: true))
+        file.Seek(entry.Offset, SeekOrigin.Begin);
+        using (var reader = new BinaryReader(file, Encoding.UTF8, leaveOpen: true))
         {
             for (int i = 0; i < entry.Count; i++)
             {
@@ -65,5 +91,10 @@ public sealed class NodePointFileStore : INodePointStore, IDisposable
         return result;
     }
 
-    public void Dispose() => _file.Dispose();
+    public void Dispose()
+    {
+        _writeFile.Dispose();
+        foreach (var file in _readFile.Values) file.Dispose();
+        _readFile.Dispose();
+    }
 }
