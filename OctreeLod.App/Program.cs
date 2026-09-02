@@ -26,7 +26,7 @@ public static class Program
     // see WavingSurfacePointCloudBatchSource. AreaSize/PointSpacing below are
     // sized for ~20M points (4501x4501).
     private const bool UseSyntheticSource = true;
-    private const double SyntheticAreaSize = 30000.0;
+    private const double SyntheticAreaSize = 90000.0;
     private const double SyntheticPointSpacing = 2.0;
     private const int SyntheticLinesPerBatch = 4;
 
@@ -46,8 +46,27 @@ public static class Program
     // took even longer, compounding. Triggering once PreviewDirtyNodeThreshold
     // new/changed nodes have piled up keeps each pass covering roughly the
     // same amount of new work regardless of how fast ingestion is running.
+    //
+    // Also directly controls how many swaps a live-viewing session sees
+    // over the whole run: the exported tree only ever grows, so each swap's
+    // tileset is bigger (and costs more browser-side memory to load) than
+    // the last — raised from 10,000 to cut the total number of swaps for a
+    // large dataset, giving the viewer's GC more breathing room between
+    // them instead of climbing continuously (see Viewer/src/main.js).
     private const bool UseLivePreview = true;
-    private const int PreviewDirtyNodeThreshold = 40_000;
+    private const int PreviewDirtyNodeThreshold = 20_000;
+
+    // Splits each export into linked external tilesets every this many
+    // levels of depth, instead of one monolithic tileset.json describing
+    // the whole tree — see Tiles3DExporter.Export's own doc comment. 0
+    // disables it (single file, as before). Exists because a 3D Tiles
+    // client (e.g. deck.gl's Tile3DLayer) eagerly constructs an in-memory
+    // tile object for every node in whatever tileset.json it loads, a real
+    // client-side cost that scales with total node count and isn't bounded
+    // by any client-side setting — only bounding how much any one file
+    // describes fixes it. Needed once the tree gets large; a small dataset
+    // gains nothing from the extra files.
+    private const int PartitionDepthInterval = 6;
 
     public static async Task Main()
     {
@@ -63,6 +82,23 @@ public static class Program
             var syntheticSource = new WavingSurfacePointCloudBatchSource(SyntheticAreaSize, SyntheticPointSpacing, SyntheticLinesPerBatch);
             Console.WriteLine($"Synthetic waving surface: {syntheticSource.PointsPerLine:N0} x {syntheticSource.LineCount:N0} points ({syntheticSource.TotalPointCount:N0} total), {SyntheticLinesPerBatch} lines/batch.");
             source = syntheticSource;
+
+            // No real-world anchor for synthetic data, but 3D Tiles viewers
+            // (deck.gl's Tile3DLayer in particular) hardcode point-cloud
+            // tiles to a geospatial path: it converts the tile's local
+            // Cartesian center as if it were an ECEF point on the WGS84
+            // ellipsoid, regardless of any coordinateSystem prop passed to
+            // the layer. With no root `transform` (i.e. no GeoReference),
+            // that center is only tens of thousands of meters from the
+            // origin — wildly inside the ~6,378,137m WGS84 ellipsoid, not
+            // on its surface — producing a near-garbage lat/lon/height and
+            // a broken per-tile transform (looks like severe z-fighting/
+            // jitter, but is actually wrong geometry, not a precision
+            // issue). An arbitrary anchor (equator/prime meridian here)
+            // fixes this: with a real root transform, everything ends up
+            // genuinely ECEF-scale, so that same conversion operates on an
+            // actual near-surface point and produces a correct transform.
+            reference = new GeoReference(latitudeDegrees: 0, longitudeDegrees: 0, heightMeters: 0);
         }
         else if (UseLatLonSource)
         {
@@ -125,7 +161,7 @@ public static class Program
 
         Console.WriteLine("Exporting 3D Tiles dataset...");
         string tilesDir = Path.Combine(workDir, "3dtiles");
-        Tiles3DExporter.Export(logicalRoot, nodeStore, gridDivisions: options.GridDivisions, tilesDir, TileRefine.Add, reference);
+        Tiles3DExporter.Export(logicalRoot, nodeStore, gridDivisions: options.GridDivisions, tilesDir, TileRefine.Add, reference, partitionDepthInterval: PartitionDepthInterval);
         Console.WriteLine($"3D Tiles dataset written to: {tilesDir}");
 
         return Task.CompletedTask;
@@ -179,7 +215,7 @@ public static class Program
         Console.WriteLine($"Logical root bbox: min=({logicalRoot.Bbox.MinX:F1},{logicalRoot.Bbox.MinY:F1},{logicalRoot.Bbox.MinZ:F1}) size={logicalRoot.Bbox.Size:F1}");
 
         Console.WriteLine("Exporting 3D Tiles dataset...");
-        Tiles3DExporter.Export(logicalRoot, nodeStore, gridDivisions: options.GridDivisions, tilesDir, TileRefine.Add, reference, incremental: true);
+        Tiles3DExporter.Export(logicalRoot, nodeStore, gridDivisions: options.GridDivisions, tilesDir, TileRefine.Add, reference, incremental: true, partitionDepthInterval: PartitionDepthInterval);
         Console.WriteLine($"3D Tiles dataset written to: {tilesDir}");
     }
 
@@ -243,7 +279,15 @@ public static class Program
             // never touched here, even if ingestion marks it dirty again
             // moments later.
             var dirtyPairs = new List<(OctreeNode Clone, OctreeNode Live)>();
-            var previewRoot = CloneSnapshot(trimmedRoot, dirtyPairs);
+            // Partition-boundary pairs (clone, live): every one of these
+            // gets its nested tileset file unconditionally rewritten by
+            // every Export call that reaches it (Tiles3DExporter doesn't
+            // skip-if-unchanged for nested files the way it does for
+            // content), so — unlike dirtyPairs above — propagating
+            // TilesetVersion back afterward isn't gated on anything; it
+            // always happened.
+            var boundaryPairs = new List<(OctreeNode Clone, OctreeNode Live)>();
+            var previewRoot = CloneSnapshot(trimmedRoot, dirtyPairs, boundaryPairs);
 
             int previewNumber = ++_previewCount;
             string tilesetFileName = $"tileset_preview_{previewNumber:D4}.json";
@@ -251,8 +295,8 @@ public static class Program
             var sw = System.Diagnostics.Stopwatch.StartNew();
             _inFlight = Task.Run(() =>
             {
-                var stats = Tiles3DExporter.Export(previewRoot, _nodeStore, gridDivisions: _options.GridDivisions, _tilesDir, TileRefine.Add, _reference, incremental: true, tilesetFileName);
-                Console.WriteLine($"\n[preview {previewNumber}] walk={stats.WalkMs}ms content={stats.ContentWriteMs}ms ({stats.NodesWritten:N0} nodes) tileset={stats.TilesetMetadataWriteMs}ms");
+                var stats = Tiles3DExporter.Export(previewRoot, _nodeStore, gridDivisions: _options.GridDivisions, _tilesDir, TileRefine.Add, _reference, incremental: true, tilesetFileName, PartitionDepthInterval);
+                Console.WriteLine($"\n[preview {previewNumber}] walk={stats.WalkMs}ms content={stats.ContentWriteMs}ms ({stats.NodesWritten:N0} nodes) tileset={stats.TilesetMetadataWriteMs}ms ({stats.NestedTilesetsWritten:N0} nested)");
 
                 // Every dirtyPairs entry got a real Export() write this pass
                 // (that's exactly why it was collected — see CloneSnapshot),
@@ -284,6 +328,13 @@ public static class Program
                 }
                 _engine.NotifyNodesClean(clearedCount);
 
+                // No dirty/point-count gating here — a boundary's nested
+                // file is rewritten unconditionally every pass, so its
+                // version always advances too; skipping this would repeat
+                // the exact ContentVersion bug above, one field over.
+                foreach (var (clone, live) in boundaryPairs)
+                    live.TilesetVersion = clone.TilesetVersion;
+
                 Console.WriteLine($"\n[preview {previewNumber}] done in {sw.Elapsed.TotalSeconds:F1}s -> {Path.Combine(_tilesDir, tilesetFileName)}");
             });
         }
@@ -293,9 +344,14 @@ public static class Program
         // references back into the live tree, so ingestion mutating the live
         // tree afterward can't affect what this export sees. Collects
         // (clone, live) pairs for nodes dirty at snapshot time into
-        // `dirtyPairs`, so the caller can propagate Dirty=false back to the
-        // live tree for whichever of them actually get written.
-        private static OctreeNode CloneSnapshot(OctreeNode node, List<(OctreeNode Clone, OctreeNode Live)> dirtyPairs)
+        // `dirtyPairs` (so the caller can propagate Dirty=false back to the
+        // live tree for whichever of them actually get written) and for
+        // partition-boundary nodes into `boundaryPairs` (so the caller can
+        // propagate their bumped TilesetVersion back) — same depth rule
+        // Tiles3DExporter itself uses to decide a boundary, computed
+        // independently here since Tiles3DExporter operates on the clone
+        // and has no way to hand live-tree references back on its own.
+        private static OctreeNode CloneSnapshot(OctreeNode node, List<(OctreeNode Clone, OctreeNode Live)> dirtyPairs, List<(OctreeNode Clone, OctreeNode Live)> boundaryPairs)
         {
             var clone = new OctreeNode
             {
@@ -308,13 +364,16 @@ public static class Program
                 Storage = node.Storage,
                 Dirty = node.Dirty,
                 ContentVersion = node.ContentVersion,
+                TilesetVersion = node.TilesetVersion,
             };
             if (node.Dirty) dirtyPairs.Add((clone, node));
+            if (PartitionDepthInterval > 0 && node.Depth > 0 && node.Depth % PartitionDepthInterval == 0)
+                boundaryPairs.Add((clone, node));
 
             for (int octant = 0; octant < 8; octant++)
             {
                 var child = node.Children[octant];
-                if (child != null) clone.Children[octant] = CloneSnapshot(child, dirtyPairs);
+                if (child != null) clone.Children[octant] = CloneSnapshot(child, dirtyPairs, boundaryPairs);
             }
             return clone;
         }

@@ -126,6 +126,22 @@ local-frame magnitudes lands the whole dataset a few hundred km from Earth's
 center — nowhere near the surface. Ingestion itself stays coordinate-agnostic
 (still just X/Y/Z meters); georeferencing is purely an export-time concern.
 
+**Partitioning (external tilesets).** With `partitionDepthInterval > 0`
+(`PartitionDepthInterval` in `Program.cs`), the tree isn't exported as one
+monolithic `tileset.json` — every node at a depth that's a multiple of that
+value becomes a partition boundary instead: its own content becomes the
+root of a separate, linked `tileset_node_{id}_v{n}.json`, and its entry in
+the parent file becomes a pure pointer tile (`content.uri` → that nested
+file, no inline `children`). This is the standard 3D Tiles external-tileset
+mechanism — a client (e.g. deck.gl's `Tile3DLayer`) fetches and parses a
+nested file lazily, only once traversal actually reaches that branch,
+instead of eagerly constructing an in-memory tile object for every node in
+the whole tree on every load — a real, otherwise-unavoidable cost that
+scales with total node count and isn't bounded by any client-side setting.
+Nested files are versioned exactly like content (`OctreeNode.TilesetVersion`)
+for the same reason: an already-published pointer must never start
+resolving to different bytes.
+
 **Live preview.** `RunSpacingEngineWithPreviewAsync` (the default in
 `Program.cs`, toggle via `UseLivePreview`) periodically re-exports the tree
 mid-ingestion — each pass writes its own `tileset_preview_NNNN.json` rather
@@ -204,6 +220,7 @@ dotnet test OctreeLod.Tests/OctreeLod.Tests.csproj
 | `SpacingIngestionOptions.MaxInMemoryNodes` | `SpacingIngestionOptions` | Out-of-core bound: max node point-sets held in RAM at once (LRU-paged to disk). Smaller → less RAM, more disk I/O from evict/reload thrashing on scattered input; larger → more RAM, fewer reloads. |
 | `UseLivePreview` | `Program.cs` | Switches between a plain single final export and periodic preview exports mid-ingestion. |
 | `PreviewDirtyNodeThreshold` | `Program.cs` | How many changed nodes trigger the next preview pass. |
+| `PartitionDepthInterval` | `Program.cs` | Depth spacing between external-tileset boundaries (0 = one monolithic tileset.json). Smaller → more, smaller nested files, less client-side eager-parse cost per file; larger → fewer, bigger files. |
 
 ## Known limitations / not yet built
 

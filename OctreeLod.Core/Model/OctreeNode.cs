@@ -50,6 +50,15 @@ public sealed class OctreeNode
     // an already-loaded client.
     public int ContentVersion;
 
+    // Same idea as ContentVersion, but for this node's NESTED tileset
+    // metadata file — only meaningful for a node Tiles3DExporter's
+    // partitioning has turned into an external-tileset boundary (see
+    // `partitionDepthInterval`). Bumped every time that nested file is
+    // (re)written, so `tileset_node_{id}_v{version}.json` is never
+    // overwritten out from under an already-published parent reference,
+    // same reasoning as ContentVersion.
+    public int TilesetVersion;
+
     public static OctreeNode CreateRoot(BoundingCube bbox)
     {
         return new OctreeNode

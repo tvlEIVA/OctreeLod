@@ -1,0 +1,21 @@
+{
+  "name": "octreelod-viewer",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "deck.gl viewer for OctreeLod's 3D Tiles output, with live-preview polling/swap for a run still in progress.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@deck.gl/core": "^9.0.0",
+    "@deck.gl/geo-layers": "^9.0.0",
+    "@loaders.gl/3d-tiles": "^4.2.0",
+    "@loaders.gl/core": "^4.2.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  }
+}
