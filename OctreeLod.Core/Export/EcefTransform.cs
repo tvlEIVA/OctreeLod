@@ -7,7 +7,9 @@ namespace OctreeLod.Core.Export;
 // mapping the tileset's local East/North/Up meters (at a GeoReference point)
 // to ECEF (Earth-Centered, Earth-Fixed) meters — the standard way to place a
 // non-georeferenced local point cloud at a real spot on the WGS84 ellipsoid.
-internal static class EcefTransform
+// Public so a live tileset builder (e.g. OctreeLod.Server) can apply the
+// same root `transform` Tiles3DExporter does, without duplicating this math.
+public static class EcefTransform
 {
     private const double SemiMajorAxis = 6378137.0; // WGS84 a
     private const double Flattening = 1.0 / 298.257223563; // WGS84 f

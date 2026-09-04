@@ -83,12 +83,28 @@ public sealed class PagedCellMapCache
         }
     }
 
-    // Writes out whatever's still in memory. After this call, every touched
-    // node's complete cell set is readable from the backing store.
+    // Writes out whatever's still in memory WITHOUT evicting it — resident
+    // nodes (root and other near-root nodes especially, which never reach
+    // the LRU tail on their own — see class doc) stay in RAM, so the very
+    // next Touch is still O(1) instead of a full reload+rebuild from disk.
+    // Use this for periodic mid-run persistence, where the whole point is
+    // to make current content visible on disk without paying to reload it
+    // moments later; use Flush() only once nothing will touch the cache
+    // again.
+    public void Persist()
+    {
+        _store.WriteAllBatch(_lruList.Select(entry => (entry.NodeId, entry.Cells.Values.ToArray())));
+    }
+
+    // Persists, then evicts everything — after this call the cache is
+    // empty and every touched node's complete cell set is readable from the
+    // backing store. Only appropriate as true end-of-run cleanup: calling
+    // this mid-run forces the next Touch on any resident node (root
+    // included) to reload and rebuild its cell dictionary from disk — see
+    // Persist() for the mid-run alternative.
     public void Flush()
     {
-        foreach (var entry in _lruList)
-            _store.WriteAll(entry.NodeId, entry.Cells.Values.ToArray());
+        Persist();
         _lruIndex.Clear();
         _lruList.Clear();
     }

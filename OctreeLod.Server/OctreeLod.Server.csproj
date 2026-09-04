@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\OctreeLod.Core\OctreeLod.Core.csproj" />
+    <!-- Reused for IPointBatchSource and its implementations (Sources/) —
+         OctreeLod.App stays untouched/still runs standalone; referencing its
+         Exe output as a library here is fine in .NET and avoids duplicating
+         or relocating that code. -->
+    <ProjectReference Include="..\OctreeLod.App\OctreeLod.App.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Sdk.Web defaults to Server GC (one heap + thread per core, tuned
+         for many threads allocating in parallel) but ingestion here runs on
+         a single thread — Workstation GC (OctreeLod.App's default, same
+         SDK-less choice) fits that shape better. -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+  </PropertyGroup>
+
+</Project>

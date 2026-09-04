@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OctreeLod.App", "OctreeLod.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OctreeLod.Tests", "OctreeLod.Tests\OctreeLod.Tests.csproj", "{56D3118A-D7A9-4A51-8758-A1D4A84C775C}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OctreeLod.Server", "OctreeLod.Server\OctreeLod.Server.csproj", "{34F33201-D782-4459-8A0C-39C875D54572}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -55,6 +57,18 @@ Global
 		{56D3118A-D7A9-4A51-8758-A1D4A84C775C}.Release|x64.Build.0 = Release|Any CPU
 		{56D3118A-D7A9-4A51-8758-A1D4A84C775C}.Release|x86.ActiveCfg = Release|Any CPU
 		{56D3118A-D7A9-4A51-8758-A1D4A84C775C}.Release|x86.Build.0 = Release|Any CPU
+		{34F33201-D782-4459-8A0C-39C875D54572}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{34F33201-D782-4459-8A0C-39C875D54572}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{34F33201-D782-4459-8A0C-39C875D54572}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{34F33201-D782-4459-8A0C-39C875D54572}.Debug|x64.Build.0 = Debug|Any CPU
+		{34F33201-D782-4459-8A0C-39C875D54572}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{34F33201-D782-4459-8A0C-39C875D54572}.Debug|x86.Build.0 = Debug|Any CPU
+		{34F33201-D782-4459-8A0C-39C875D54572}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{34F33201-D782-4459-8A0C-39C875D54572}.Release|Any CPU.Build.0 = Release|Any CPU
+		{34F33201-D782-4459-8A0C-39C875D54572}.Release|x64.ActiveCfg = Release|Any CPU
+		{34F33201-D782-4459-8A0C-39C875D54572}.Release|x64.Build.0 = Release|Any CPU
+		{34F33201-D782-4459-8A0C-39C875D54572}.Release|x86.ActiveCfg = Release|Any CPU
+		{34F33201-D782-4459-8A0C-39C875D54572}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

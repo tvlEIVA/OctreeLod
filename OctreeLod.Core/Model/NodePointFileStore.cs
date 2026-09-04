@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
 using System.Text;
@@ -49,26 +50,39 @@ public sealed class NodePointFileStore : INodePointStore, IDisposable
             trackAllValues: true);
     }
 
-    public void WriteAll(BigInteger nodeId, PointRecord[] points)
+    public void WriteAll(BigInteger nodeId, PointRecord[] points) =>
+        WriteAllBatch(new[] { (nodeId, points) });
+
+    // Writes many nodes under a single lock hold and a single OS-level
+    // flush at the end, instead of one lock+flush per node (see WriteAll's
+    // single-item call above) — a caller writing many nodes back-to-back
+    // (e.g. PagedCellMapCache.Persist snapshotting everything currently
+    // resident) would otherwise pay a real per-call flush cost that many
+    // times over for no extra durability: nothing needs any ONE of these
+    // nodes visible before the whole batch is done.
+    public void WriteAllBatch(IEnumerable<(BigInteger NodeId, PointRecord[] Points)> items)
     {
         lock (_writeLock)
         {
-            long offset = _writeFile.Length;
-            _writeFile.Seek(offset, SeekOrigin.Begin);
+            _writeFile.Seek(_writeFile.Length, SeekOrigin.Begin);
             using (var writer = new BinaryWriter(_writeFile, Encoding.UTF8, leaveOpen: true))
             {
-                foreach (var p in points)
+                foreach (var (nodeId, points) in items)
                 {
-                    writer.Write(p.X);
-                    writer.Write(p.Y);
-                    writer.Write(p.Z);
-                    writer.Write(p.R);
-                    writer.Write(p.G);
-                    writer.Write(p.B);
+                    long offset = _writeFile.Position;
+                    foreach (var p in points)
+                    {
+                        writer.Write(p.X);
+                        writer.Write(p.Y);
+                        writer.Write(p.Z);
+                        writer.Write(p.R);
+                        writer.Write(p.G);
+                        writer.Write(p.B);
+                    }
+                    _index[nodeId] = (offset, points.Length);
                 }
             }
             _writeFile.Flush(); // push past the FileStream's own buffer so _readFile's independent handle can see these bytes
-            _index[nodeId] = (offset, points.Length);
         }
     }
 

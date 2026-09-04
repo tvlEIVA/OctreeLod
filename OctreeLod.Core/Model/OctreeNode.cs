@@ -7,11 +7,10 @@ namespace OctreeLod.Core.Model;
 // or id-lookup needed for in-memory traversal in either direction.
 //
 // `Id` still exists purely as a stable external handle: INodePointStore
-// keys a node's on-disk point data by it, and 3D Tiles export uses it (with
-// ContentVersion) as the content filename (`{id}_v{version}.pnts`). Neither
-// of those can address a node by C# object reference, so the id has to
-// exist regardless of how the in-memory tree is shaped — it's not used for
-// in-memory traversal at all.
+// keys a node's on-disk point data by it, and 3D Tiles export uses it as
+// the content filename (`{id}.pnts`). Neither of those can address a node
+// by C# object reference, so the id has to exist regardless of how the
+// in-memory tree is shaped — it's not used for in-memory traversal at all.
 //
 // Derived from position, not a counter: root = 0, child = parent.Id * 8 +
 // octant + 1 (the standard complete-8-ary-tree indexing scheme — same
@@ -33,31 +32,6 @@ public sealed class OctreeNode
     public long PointCount;
     public StorageLocator Storage;
     public readonly OctreeNode?[] Children = new OctreeNode?[8]; // index = octant 0..7; null where absent
-
-    // Set whenever this node's own accepted-point content changes (new point
-    // stored directly at it) and true from creation. Lets an incremental
-    // exporter (see Tiles3DExporter) skip rewriting a node's content file
-    // when nothing about it changed since the last export; the exporter
-    // clears it after writing.
-    public bool Dirty = true;
-
-    // Bumped by Tiles3DExporter each time this node's content is actually
-    // (re)written; 0 means never written. The content filename encodes this
-    // (`{id}_v{version}.pnts`), so a rewrite never overwrites a filename
-    // already-published tileset metadata (e.g. an earlier
-    // tileset_preview_NNNN.json) still references — that file stays
-    // byte-for-byte as it was forever, instead of silently changing under
-    // an already-loaded client.
-    public int ContentVersion;
-
-    // Same idea as ContentVersion, but for this node's NESTED tileset
-    // metadata file — only meaningful for a node Tiles3DExporter's
-    // partitioning has turned into an external-tileset boundary (see
-    // `partitionDepthInterval`). Bumped every time that nested file is
-    // (re)written, so `tileset_node_{id}_v{version}.json` is never
-    // overwritten out from under an already-published parent reference,
-    // same reasoning as ContentVersion.
-    public int TilesetVersion;
 
     public static OctreeNode CreateRoot(BoundingCube bbox)
     {

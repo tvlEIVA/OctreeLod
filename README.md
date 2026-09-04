@@ -24,9 +24,9 @@ ingestion finishes, and even mid-ingestion for a live preview (see below).
     (the engine exposes `Root`, nothing else — no separate metadata store or
     id-indexed list). Every node still carries a stable `Id`, but only as an
     external handle: `INodePointStore` keys on-disk point data by it, and 3D
-    Tiles export uses it (with `ContentVersion`) as the content filename
-    (`{id}_v{version}.pnts`) — it plays no role in in-memory traversal. `Id`
-    is derived from position, not a counter: root = 0, child = `parent.Id *
+    Tiles export uses it as the content filename (`{id}.pnts`) — it plays no
+    role in in-memory traversal. `Id` is derived from position, not a
+    counter: root = 0, child = `parent.Id *
     8 + octant + 1` (standard complete-8-ary-tree indexing — same arithmetic
     a binary heap uses, generalized from 2 children to 8). Deterministic and
     collision-free by construction, but the id needs ~3 bits per depth
@@ -36,10 +36,13 @@ ingestion finishes, and even mid-ingestion for a live preview (see below).
   - **`SpacingEngine/`** — `SpacingIngestionEngine`, ingest options. Single
     streaming pass, no merge phase — see "How it works" below.
   - **`Export/`** — `Tiles3DExporter` (`TileRefine.Add`/`.Replace`, caller
-    picks), `PntsWriter`, `MinimalJsonWriter`. Reads representative point
-    sets via `Model`'s `INodePointStore`.
-- **`OctreeLod.App`** (net8.0) — console entry point. Input-format-specific
-  reading lives in its own `Sources/` folder (`IPointBatchSource`
+    picks), `PntsWriter`, `MinimalJsonWriter`, `TileGeometry` (shared
+    boundingVolume/geometricError math), `EcefTransform`. Reads
+    representative point sets via `Model`'s `INodePointStore`.
+- **`OctreeLod.App`** (net8.0) — console entry point: ingest, then write a
+  `tileset.json` + `.pnts` dataset to disk (optionally with periodic
+  mid-ingestion preview snapshots — see "Live preview" below). Input-format-
+  specific reading lives in its own `Sources/` folder (`IPointBatchSource`
   implementations) so a different file format is a new class there, not a
   change to the pipeline: `TextPointCloudBatchSource` (already-Cartesian
   easting/northing/depth), `LatLonPointCloudBatchSource` (geodetic
@@ -47,7 +50,14 @@ ingestion finishes, and even mid-ingestion for a live preview (see below).
   below), and `WavingSurfacePointCloudBatchSource` (synthetic undulating
   test surface, color-by-elevation, for exercising the pipeline without a
   real input file).
+- **`OctreeLod.Server`** (net8.0, ASP.NET Core) — a second, parallel way to
+  watch a run: ingests the same way, but serves the octree live over HTTP
+  instead of writing snapshots to disk — see "Live HTTP server" below.
+  Reuses `OctreeLod.App`'s `Sources/` via project reference; `OctreeLod.App`
+  itself is untouched and still runs standalone.
 - **`OctreeLod.Tests`** (net8.0, xUnit) — unit + end-to-end tests.
+- **`Viewer/`** — a small deck.gl + Vite web viewer for the exported/served
+  tiles, with live-preview polling (see `Viewer/README.md`).
 
 ## How it works
 
@@ -106,18 +116,14 @@ more distinct deep nodes than fit in the cache would thrash). Real
 PotreeConverter 2.0 avoids paging entirely with a two-pass chunked/
 external-sort indexer; that's a bigger lift, out of scope here.
 
-**Export.** Walks the (trimmed) tree and writes one `content/{id}_v{n}.pnts`
-file per changed node plus a `tileset.json` describing the hierarchy (`box`
-bounding volumes, `geometricError` derived from grid cell size). Refine mode
-is always `ADD`: a node's content is only what its children didn't already
+**Export.** Walks the (trimmed) tree and writes one `content/{id}.pnts` file
+per node plus a `tileset.json` describing the hierarchy (`box` bounding
+volumes, `geometricError` derived from grid cell size). Refine mode is
+always `ADD`: a node's content is only what its children didn't already
 capture, so a child adds finer detail on top of its parent rather than
-replacing it. Content filenames are versioned (`OctreeNode.ContentVersion`,
-bumped on every rewrite) rather than overwritten in place, so a
-`tileset.json` already handed to a client keeps pointing at valid,
-unchanged bytes forever — a rewritten node just gets a new `_v{n+1}.pnts`
-file, never touching the old one. Each `.pnts` stores positions as
-`RTC_CENTER`-relative float32 offsets, so precision holds up even far from
-the coordinate origin. Optionally pass a `GeoReference` (lat/lon/height) to
+replacing it. Each `.pnts` stores positions as `RTC_CENTER`-relative
+float32 offsets, so precision holds up even far from the coordinate
+origin. Optionally pass a `GeoReference` (lat/lon/height) to
 `Tiles3DExporter.Export` to anchor the local East/North/Up frame to a real
 spot on the WGS84 ellipsoid — this writes a root `transform` (local → ECEF)
 so 3D Tiles viewers (Cesium, deck.gl) place the dataset on the globe instead
@@ -126,32 +132,43 @@ local-frame magnitudes lands the whole dataset a few hundred km from Earth's
 center — nowhere near the surface. Ingestion itself stays coordinate-agnostic
 (still just X/Y/Z meters); georeferencing is purely an export-time concern.
 
-**Partitioning (external tilesets).** With `partitionDepthInterval > 0`
-(`PartitionDepthInterval` in `Program.cs`), the tree isn't exported as one
-monolithic `tileset.json` — every node at a depth that's a multiple of that
-value becomes a partition boundary instead: its own content becomes the
-root of a separate, linked `tileset_node_{id}_v{n}.json`, and its entry in
-the parent file becomes a pure pointer tile (`content.uri` → that nested
-file, no inline `children`). This is the standard 3D Tiles external-tileset
-mechanism — a client (e.g. deck.gl's `Tile3DLayer`) fetches and parses a
-nested file lazily, only once traversal actually reaches that branch,
-instead of eagerly constructing an in-memory tile object for every node in
-the whole tree on every load — a real, otherwise-unavoidable cost that
-scales with total node count and isn't bounded by any client-side setting.
-Nested files are versioned exactly like content (`OctreeNode.TilesetVersion`)
-for the same reason: an already-published pointer must never start
-resolving to different bytes.
+**Partitioning (external tilesets).** The tree isn't exported as one
+monolithic `tileset.json` — every node's own content becomes the root of a
+separate, linked `tileset_node_{id}.json`, and its entry in the parent file
+is a pure pointer tile (`content.uri` → that nested file, no inline
+`children`). This is the standard 3D Tiles external-tileset mechanism — a
+client (e.g. deck.gl's `Tile3DLayer`) fetches and parses each node's file
+lazily, only once traversal actually reaches it, instead of eagerly
+constructing an in-memory tile object for every node in the whole tree on
+every load — a real, otherwise-unavoidable cost that scales with total node
+count and isn't bounded by any client-side setting.
 
-**Live preview.** `RunSpacingEngineWithPreviewAsync` (the default in
-`Program.cs`, toggle via `UseLivePreview`) periodically re-exports the tree
-mid-ingestion — each pass writes its own `tileset_preview_NNNN.json` rather
-than overwriting one shared file, so every snapshot stays on disk and a
-client can keep several loaded at once. A pass triggers once
-`PreviewDirtyNodeThreshold` nodes have changed since the last one (not on a
-fixed timer — that let a slow pass's backlog compound into the next one),
-and runs on a background thread against a cheap in-memory snapshot of the
-tree taken at trigger time, so it never blocks ingestion and always reflects
-the octree exactly as of that moment.
+**Live HTTP server (`OctreeLod.Server`).** An alternative to a file-based
+export: `OctreeLod.Server` ingests the same way, but instead of writing
+`tileset.json`/`.pnts` to disk, serves the octree directly over HTTP — `GET
+/tileset.json`, `GET /tileset/node/{id}.json` (per-node nested tilesets),
+`GET /content/{id}.pnts` — each generated fresh, straight from whatever the
+tree looks like at that instant. Nothing is ever "published", so there's
+nothing whose identity needs protecting from being silently changed out
+from under a reader — a client just always sees current state on the next fetch
+(responses are sent `Cache-Control: no-store` accordingly, except
+`/content/{id}.pnts` which uses an `ETag` on the node's point count instead,
+so an unchanged node costs the client a `304` rather than a full re-send).
+`NodePointFileStore`'s existing concurrent-read support is what makes this
+safe — ingestion keeps writing while requests read; reading the live
+`OctreeNode` tree structure concurrently is a benign, eventually-consistent
+race (a request might render a subtree a moment before or after a sibling
+gains a new child, never a crash — see `LiveTilesetBuilder`'s doc comment).
+Content is only visible once its node's data has been persisted to disk at
+least once (`PersistEveryPoints`); `OctreeLod.App` is untouched and still runs
+standalone — this is a second, parallel way to watch a run, not a
+replacement.
+
+```bash
+dotnet run --project OctreeLod.Server/OctreeLod.Server.csproj
+```
+
+Then point the viewer (`Viewer/`) at `http://localhost:5251/tileset.json`.
 
 ## Input formats
 
@@ -218,9 +235,7 @@ dotnet test OctreeLod.Tests/OctreeLod.Tests.csproj
 | `SpacingIngestionOptions.MaxSplitDepth` | `SpacingIngestionOptions` | Guard against pathological (near-)duplicate point clusters that can never be spatially separated. |
 | `SpacingIngestionOptions.WorldBounds` | `SpacingIngestionOptions` | Fixed root extent — must comfortably contain the real data. |
 | `SpacingIngestionOptions.MaxInMemoryNodes` | `SpacingIngestionOptions` | Out-of-core bound: max node point-sets held in RAM at once (LRU-paged to disk). Smaller → less RAM, more disk I/O from evict/reload thrashing on scattered input; larger → more RAM, fewer reloads. |
-| `UseLivePreview` | `Program.cs` | Switches between a plain single final export and periodic preview exports mid-ingestion. |
-| `PreviewDirtyNodeThreshold` | `Program.cs` | How many changed nodes trigger the next preview pass. |
-| `PartitionDepthInterval` | `Program.cs` | Depth spacing between external-tileset boundaries (0 = one monolithic tileset.json). Smaller → more, smaller nested files, less client-side eager-parse cost per file; larger → fewer, bigger files. |
+| `PersistEveryPoints` | `OctreeLod.Server/Program.cs` | How many ingested points between persists of the in-memory cell cache to disk (write without evicting) — bounds how stale the live HTTP server's view of near-root nodes can get. |
 
 ## Known limitations / not yet built
 

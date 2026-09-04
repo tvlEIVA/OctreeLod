@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Numerics;
 
 namespace OctreeLod.Core.Model;
@@ -14,5 +15,12 @@ namespace OctreeLod.Core.Model;
 public interface INodePointStore
 {
     void WriteAll(BigInteger nodeId, PointRecord[] points);
+
+    // Writes many nodes in one call instead of one WriteAll call each — see
+    // NodePointFileStore.WriteAllBatch for why that's worth having: writing
+    // dozens/thousands of nodes one at a time each pays a per-call
+    // durability cost (an OS-level flush) that a real batch can pay once.
+    void WriteAllBatch(IEnumerable<(BigInteger NodeId, PointRecord[] Points)> items);
+
     PointRecord[] ReadAll(BigInteger nodeId);
 }

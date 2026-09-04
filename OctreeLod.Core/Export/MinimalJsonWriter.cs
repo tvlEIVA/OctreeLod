@@ -8,8 +8,11 @@ namespace OctreeLod.Core.Export;
 // Minimal recursive JSON writer scoped to tileset.json's known, fixed shape
 // (objects, arrays, numbers, strings, bools) — deliberately not a
 // general-purpose serializer; see design notes on avoiding a
-// System.Text.Json dependency in this netstandard2.0 library.
-internal static class MinimalJsonWriter
+// System.Text.Json dependency in this netstandard2.0 library. Public so a
+// live tileset builder (e.g. OctreeLod.Server) serializes the exact same
+// JSON shape/number formatting as the file-based exporter, instead of a
+// second serialization path that could subtly diverge from it.
+public static class MinimalJsonWriter
 {
     public static string Write(object value)
     {

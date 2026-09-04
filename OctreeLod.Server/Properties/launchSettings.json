@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "OctreeLod.Server": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:4695;http://localhost:4696"
+    }
+  }
+}

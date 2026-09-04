@@ -22,6 +22,15 @@ public static class PntsWriter
 
     public static void WriteFile(string path, BoundingCube tileBbox, PointRecord[] points)
     {
+        using var fs = new FileStream(path, FileMode.Create, FileAccess.Write);
+        WriteTo(fs, tileBbox, points);
+    }
+
+    // Same binary layout as WriteFile, but into any Stream — e.g. an HTTP
+    // response body, for a server generating .pnts content live from the
+    // in-memory octree instead of writing a file at all.
+    public static void WriteTo(Stream stream, BoundingCube tileBbox, PointRecord[] points)
+    {
         double centerX = tileBbox.MinX + tileBbox.Size / 2;
         double centerY = tileBbox.MinY + tileBbox.Size / 2;
         double centerZ = tileBbox.MinZ + tileBbox.Size / 2;
@@ -47,8 +56,7 @@ public static class PntsWriter
 
         int byteLength = HeaderByteSize + featureTableJsonByteLength + featureTableBinaryByteLength;
 
-        using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write))
-        using (var writer = new BinaryWriter(fs))
+        using (var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true))
         {
             writer.Write(Encoding.ASCII.GetBytes("pnts"));
             writer.Write((uint)1);
