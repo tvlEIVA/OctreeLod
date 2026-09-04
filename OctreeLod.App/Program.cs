@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
-using OctreeLod.App.Sources;
+using OctreeLod.Core.Sources;
 using OctreeLod.Core.Export;
 using OctreeLod.Core.Model;
 using OctreeLod.Core.SpacingEngine;
@@ -23,12 +23,12 @@ public static class Program
     private const bool LatLonHasHeader = true;
 
     // Synthetic waving-surface dataset instead of reading InputPath at all —
-    // see WavingSurfacePointCloudBatchSource. AreaSize/PointSpacing below are
-    // sized for ~20M points (4501x4501).
+    // see WavingSurfacePointCloudBatchSource.
     private const bool UseSyntheticSource = true;
     private const double SyntheticAreaSize = 9000.0;
     private const double SyntheticPointSpacing = 2.0;
-    private const int SyntheticLinesPerBatch = 4;
+    private const double SyntheticSwathWidth = SyntheticAreaSize / 10.0;
+    private const int SyntheticSweepsPerBatch = 4;
 
     public static async Task Main()
     {
@@ -41,8 +41,8 @@ public static class Program
         GeoReference? reference = null;
         if (UseSyntheticSource)
         {
-            var syntheticSource = new WavingSurfacePointCloudBatchSource(SyntheticAreaSize, SyntheticPointSpacing, SyntheticLinesPerBatch);
-            Console.WriteLine($"Synthetic waving surface: {syntheticSource.PointsPerLine:N0} x {syntheticSource.LineCount:N0} points ({syntheticSource.TotalPointCount:N0} total), {SyntheticLinesPerBatch} lines/batch.");
+            var syntheticSource = new WavingSurfacePointCloudBatchSource(SyntheticAreaSize, SyntheticPointSpacing, SyntheticSwathWidth, SyntheticSweepsPerBatch);
+            Console.WriteLine($"Synthetic waving surface: {syntheticSource.RunLineCount:N0} run lines x {syntheticSource.SweepsPerRunLine:N0} sweeps x {syntheticSource.PointsPerSweep:N0} points/sweep ({syntheticSource.TotalPointCount:N0} total), {SyntheticSweepsPerBatch} sweeps/batch.");
             source = syntheticSource;
 
             // No real-world anchor for synthetic data, but 3D Tiles viewers

@@ -4,7 +4,7 @@ using System.Globalization;
 using System.IO;
 using OctreeLod.Core.Model;
 
-namespace OctreeLod.App.Sources;
+namespace OctreeLod.Core.Sources;
 
 // Reads a whitespace-delimited text point cloud with a header row:
 //   easting northing depth red green blue nx ny nz

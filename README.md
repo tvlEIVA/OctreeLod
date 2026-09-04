@@ -39,22 +39,22 @@ ingestion finishes, and even mid-ingestion for a live preview (see below).
     picks), `PntsWriter`, `MinimalJsonWriter`, `TileGeometry` (shared
     boundingVolume/geometricError math), `EcefTransform`. Reads
     representative point sets via `Model`'s `INodePointStore`.
+  - **`Sources/`** — `IPointBatchSource` implementations, shared by both
+    `OctreeLod.App` and `OctreeLod.Server` so neither depends on the other
+    just to read input: `TextPointCloudBatchSource` (already-Cartesian
+    easting/northing/depth), `LatLonPointCloudBatchSource` (geodetic
+    lon/lat/height, auto-converted to local ENU meters — see Input formats
+    below), and `WavingSurfacePointCloudBatchSource` (synthetic lawn-mower
+    survey over an undulating test surface, color-by-elevation, for
+    exercising the pipeline without a real input file). A different file
+    format is a new class here, not a change to the pipeline.
 - **`OctreeLod.App`** (net8.0) — console entry point: ingest, then write a
-  `tileset.json` + `.pnts` dataset to disk (optionally with periodic
-  mid-ingestion preview snapshots — see "Live preview" below). Input-format-
-  specific reading lives in its own `Sources/` folder (`IPointBatchSource`
-  implementations) so a different file format is a new class there, not a
-  change to the pipeline: `TextPointCloudBatchSource` (already-Cartesian
-  easting/northing/depth), `LatLonPointCloudBatchSource` (geodetic
-  lon/lat/height, auto-converted to local ENU meters — see Input formats
-  below), and `WavingSurfacePointCloudBatchSource` (synthetic undulating
-  test surface, color-by-elevation, for exercising the pipeline without a
-  real input file).
+  `tileset.json` + `.pnts` dataset to disk.
 - **`OctreeLod.Server`** (net8.0, ASP.NET Core) — a second, parallel way to
   watch a run: ingests the same way, but serves the octree live over HTTP
   instead of writing snapshots to disk — see "Live HTTP server" below.
-  Reuses `OctreeLod.App`'s `Sources/` via project reference; `OctreeLod.App`
-  itself is untouched and still runs standalone.
+  Depends only on `OctreeLod.Core`; `OctreeLod.App` is untouched and still
+  runs standalone.
 - **`OctreeLod.Tests`** (net8.0, xUnit) — unit + end-to-end tests.
 - **`Viewer/`** — a small deck.gl + Vite web viewer for the exported/served
   tiles, with live-preview polling (see `Viewer/README.md`).

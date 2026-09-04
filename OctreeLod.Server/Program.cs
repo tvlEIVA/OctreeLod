@@ -1,5 +1,5 @@
 using System.Numerics;
-using OctreeLod.App.Sources;
+using OctreeLod.Core.Sources;
 using OctreeLod.Core.Export;
 using OctreeLod.Core.Model;
 using OctreeLod.Core.SpacingEngine;
@@ -27,7 +27,8 @@ public static class Program
     private const bool UseSyntheticSource = true;
     private const double SyntheticAreaSize = 90000.0;
     private const double SyntheticPointSpacing = 2.0;
-    private const int SyntheticLinesPerBatch = 2;
+    private const double SyntheticSwathWidth = SyntheticAreaSize / 10.0;
+    private const int SyntheticSweepsPerBatch = 50;
 
     // How often (in ingested points) the ingestion loop persists its
     // in-memory cell cache to disk (SpacingIngestionEngine.Persist — writes
@@ -65,8 +66,8 @@ public static class Program
         GeoReference? reference = null;
         if (UseSyntheticSource)
         {
-            var syntheticSource = new WavingSurfacePointCloudBatchSource(SyntheticAreaSize, SyntheticPointSpacing, SyntheticLinesPerBatch);
-            Console.WriteLine($"Synthetic waving surface: {syntheticSource.PointsPerLine:N0} x {syntheticSource.LineCount:N0} points ({syntheticSource.TotalPointCount:N0} total).");
+            var syntheticSource = new WavingSurfacePointCloudBatchSource(SyntheticAreaSize, SyntheticPointSpacing, SyntheticSwathWidth, SyntheticSweepsPerBatch);
+            Console.WriteLine($"Synthetic waving surface: {syntheticSource.RunLineCount:N0} run lines x {syntheticSource.SweepsPerRunLine:N0} sweeps x {syntheticSource.PointsPerSweep:N0} points/sweep ({syntheticSource.TotalPointCount:N0} total).");
             source = syntheticSource;
 
             // No real-world anchor for synthetic data, but deck.gl's

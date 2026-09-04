@@ -22,7 +22,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\OctreeLod.Core\OctreeLod.Core.csproj" />
-    <ProjectReference Include="..\OctreeLod.App\OctreeLod.App.csproj" />
   </ItemGroup>
 
 </Project>

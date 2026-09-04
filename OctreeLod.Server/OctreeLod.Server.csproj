@@ -2,11 +2,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\OctreeLod.Core\OctreeLod.Core.csproj" />
-    <!-- Reused for IPointBatchSource and its implementations (Sources/) —
-         OctreeLod.App stays untouched/still runs standalone; referencing its
-         Exe output as a library here is fine in .NET and avoids duplicating
-         or relocating that code. -->
-    <ProjectReference Include="..\OctreeLod.App\OctreeLod.App.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
