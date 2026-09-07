@@ -1,10 +1,23 @@
-import {Deck, MapView} from '@deck.gl/core';
+import {Deck, MapView, COORDINATE_SYSTEM} from '@deck.gl/core';
 import {Tile3DLayer} from '@deck.gl/geo-layers';
+import {PointCloudLayer} from '@deck.gl/layers';
 import {Tiles3DLoader} from '@loaders.gl/3d-tiles';
 
 // Point this at a running OctreeLod.Server (see OctreeLod.Server/Program.cs).
 const BASE_URL = 'http://localhost:5251';
 const POLL_MS = 5000;
+
+// /recent-points.bin is a fixed-size in-memory buffer, no tree walk/disk
+// I/O — cheap enough to poll faster than the tileset above, bridging the
+// real lag between a point being ingested and it surviving the full
+// pipeline (accepted -> persisted -> next tileset poll -> tile fetch). The
+// whole buffer is re-sent/re-decoded/re-uploaded every tick (no delta), so
+// this interval directly trades viewer cost against freshness — raise it
+// if the viewer lags, lower it for fresher recent points.
+const RECENT_POINTS_POLL_MS = 500;
+const RECENT_POINT_BYTES = 27; // matches OctreeLod.Core PointRecord.ByteSize (3x float64 + 3x uint8)
+const RECENT_POINT_SIZE = 4; // vs Tile3DLayer's pointSize=2, to visually flag "not yet in the tree"
+const RECENT_POINTS_ORIGIN = [0, 0, 0]; // must match Program.cs's hardcoded synthetic GeoReference
 
 // Keep 2 tilesets mounted during a swap so the old one keeps rendering while
 // the new one streams in (avoids a blank-frame flicker). Costs roughly 2x
@@ -13,11 +26,11 @@ const MAX_VISIBLE_TILESETS = 2;
 
 // Tileset3D's own tile cache cap, in MB (loaders.gl default: 32). Only evicts
 // tiles not needed by the current view, so it's not a hard ceiling.
-const TILE_CACHE_MB = 64;
+const TILE_CACHE_MB = 32;
 
 // Pixels of screen-space error tolerated before descending to a finer LOD
 // (loaders.gl default: 8). Higher = coarser but fewer simultaneous tiles.
-const MAX_SCREEN_SPACE_ERROR = 16;
+const MAX_SCREEN_SPACE_ERROR = 8;
 
 // Hard cap on simultaneously-selected tiles (loaders.gl default: unlimited).
 // Past this, loaders.gl keeps only the tiles closest to the viewport center.
@@ -78,6 +91,17 @@ setInterval(() => logMemory('heartbeat'), 10000);
 let activeTilesets = [];
 let latestUrl = null;
 
+// Set by pollRecentPoints; composed into the same layers array as the
+// tile layers by updateLayers, so neither poll loop clobbers the other's
+// contribution.
+let recentPointsLayer = null;
+
+function updateLayers() {
+  const layers = activeTilesets.map(makeLayer);
+  if (recentPointsLayer) layers.push(recentPointsLayer);
+  deckgl.setProps({layers});
+}
+
 function makeLayer({url, label}) {
   return new Tile3DLayer({
     // Stable id per url — deck.gl treats a repeated url as the same layer
@@ -126,7 +150,7 @@ function setTileset(url, label) {
   activeTilesets.push({url, label});
   if (activeTilesets.length > MAX_VISIBLE_TILESETS) activeTilesets.shift();
 
-  deckgl.setProps({layers: activeTilesets.map(makeLayer)});
+  updateLayers();
   statusEl.textContent = `${label} — loading…`;
 }
 
@@ -145,4 +169,49 @@ function pollLiveServer(baseUrl, pollMs) {
   setInterval(tick, pollMs);
 }
 
+// Reads float64 X/Y/Z off the wire (matches the server's `double` layout)
+// but stores them as Float32Array for the GPU attribute — safe since these
+// are meters offset from RECENT_POINTS_ORIGIN, bounded by the synthetic
+// area size, so float32's precision loss is well under a millimeter.
+function decodeRecentPoints(buffer) {
+  const count = buffer.byteLength / RECENT_POINT_BYTES;
+  const view = new DataView(buffer);
+  const positions = new Float32Array(count * 3);
+  const colors = new Uint8Array(count * 3);
+  let o = 0;
+  for (let i = 0; i < count; i++) {
+    positions[i * 3] = view.getFloat64(o, true); o += 8;
+    positions[i * 3 + 1] = view.getFloat64(o, true); o += 8;
+    positions[i * 3 + 2] = view.getFloat64(o, true); o += 8;
+    colors[i * 3] = view.getUint8(o++);
+    colors[i * 3 + 1] = view.getUint8(o++);
+    colors[i * 3 + 2] = view.getUint8(o++);
+  }
+  return {positions, colors, count};
+}
+
+function makeRecentPointsLayer({positions, colors, count}) {
+  return new PointCloudLayer({
+    id: 'recent-points', // stable id — updates in place instead of reallocating GPU buffers each tick
+    data: {length: count, attributes: {getPosition: {value: positions, size: 3}, getColor: {value: colors, size: 3}}},
+    coordinateSystem: COORDINATE_SYSTEM.METER_OFFSETS,
+    coordinateOrigin: RECENT_POINTS_ORIGIN,
+    pointSize: RECENT_POINT_SIZE,
+  });
+}
+
+// No LOD needed — this is a flat, always-fully-visible buffer, not a
+// hierarchy, so no Tile3DLayer/tileset machinery involved: one fetch, one
+// GPU upload, straight to PointCloudLayer.
+function pollRecentPoints(baseUrl, pollMs) {
+  async function tick() {
+    const res = await fetch(`${baseUrl}/recent-points.bin`, {cache: 'no-store'});
+    recentPointsLayer = makeRecentPointsLayer(decodeRecentPoints(await res.arrayBuffer()));
+    updateLayers();
+  }
+  tick();
+  setInterval(tick, pollMs);
+}
+
 pollLiveServer(BASE_URL, POLL_MS);
+pollRecentPoints(BASE_URL, RECENT_POINTS_POLL_MS);

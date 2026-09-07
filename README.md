@@ -164,6 +164,16 @@ least once (`PersistEveryPoints`); `OctreeLod.App` is untouched and still runs
 standalone — this is a second, parallel way to watch a run, not a
 replacement.
 
+A fourth route, `GET /recent-points.bin`, bypasses the tree/persist/tileset
+pipeline entirely: a raw flat binary (no header, no count prefix — just
+`PointRecord`s back to back, `X,Y,Z` as `double` then `R,G,B` as `byte`) of
+whatever's currently in a small fixed-capacity in-memory ring buffer fed
+straight from ingested batches (`RecentPointsBuffer`). It exists to bridge
+the real lag the other routes have between a point being ingested and it
+surviving persist + a tileset poll + a tile fetch — a client can poll it
+far more often (no tree walk, no disk I/O) for a fast, low-latency "just
+arrived" overlay, not as a replacement for the authoritative LOD content.
+
 ```bash
 dotnet run --project OctreeLod.Server/OctreeLod.Server.csproj
 ```

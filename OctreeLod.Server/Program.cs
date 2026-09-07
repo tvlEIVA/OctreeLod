@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Text;
 using OctreeLod.Core.Sources;
 using OctreeLod.Core.Export;
 using OctreeLod.Core.Model;
@@ -28,7 +29,7 @@ public static class Program
     private const double SyntheticAreaSize = 90000.0;
     private const double SyntheticPointSpacing = 2.0;
     private const double SyntheticSwathWidth = SyntheticAreaSize / 10.0;
-    private const int SyntheticSweepsPerBatch = 50;
+    private const int SyntheticSweepsPerBatch = 25;
 
     // How often (in ingested points) the ingestion loop persists its
     // in-memory cell cache to disk (SpacingIngestionEngine.Persist — writes
@@ -61,6 +62,7 @@ public static class Program
 
         using var nodeStore = new NodePointFileStore(Path.Combine(workDir, "nodes"));
         var engine = new SpacingIngestionEngine(nodeStore, options);
+        var recentPoints = new RecentPointsBuffer();
 
         IPointBatchSource source;
         GeoReference? reference = null;
@@ -90,7 +92,7 @@ public static class Program
             source = new TextPointCloudBatchSource(InputPath, BatchSize);
         }
 
-        var app = BuildApp(engine, nodeStore, options, reference);
+        var app = BuildApp(engine, nodeStore, recentPoints, options, reference);
         var serverTask = app.RunAsync(ListenUrl);
         Console.WriteLine($"Live tile server listening on {ListenUrl}");
         Console.WriteLine($"Point deck.gl's Tile3DLayer at {ListenUrl}/tileset.json (see Viewer/)");
@@ -107,6 +109,7 @@ public static class Program
         foreach (var batch in source.ReadBatches())
         {
             engine.IngestBatch(batch);
+            recentPoints.AddBatch(batch);
             totalPoints += batch.Count;
 
             if (totalPoints - lastPersistAtPoints >= PersistEveryPoints)
@@ -129,7 +132,7 @@ public static class Program
         await serverTask;
     }
 
-    private static WebApplication BuildApp(SpacingIngestionEngine engine, NodePointFileStore nodeStore, SpacingIngestionOptions options, GeoReference? reference)
+    private static WebApplication BuildApp(SpacingIngestionEngine engine, NodePointFileStore nodeStore, RecentPointsBuffer recentPoints, SpacingIngestionOptions options, GeoReference? reference)
     {
         var builder = WebApplication.CreateBuilder();
         // Quiet, not silent: routine per-request logging would fight with
@@ -228,6 +231,66 @@ public static class Program
             // then copy that buffer to the real response asynchronously.
             using var buffer = new MemoryStream();
             PntsWriter.WriteTo(buffer, node.Bbox, points);
+            buffer.Position = 0;
+            await buffer.CopyToAsync(response.Body);
+        });
+
+        // Bypasses the octree/persist/tileset pipeline entirely — a flat
+        // binary of whatever's currently in RecentPointsBuffer, for a
+        // fast-polling low-latency viewer overlay rather than authoritative
+        // LOD content. No count prefix: the client just divides
+        // Content-Length by PointRecord.ByteSize (27). No ETag/304 either —
+        // unlike a node's .pnts (a stable per-version resource), this
+        // buffer's contents differ on nearly every request at this ingest
+        // rate, so a conditional round-trip would never save the resend.
+        app.MapMethods("/recent-points.bin", getAndHead, async (HttpRequest request, HttpResponse response) =>
+        {
+            response.Headers["Cache-Control"] = "no-store";
+            response.ContentType = "application/octet-stream";
+            if (HttpMethods.IsHead(request.Method)) return;
+
+            var points = recentPoints.Snapshot();
+
+            // The time these points were actually ingested (not now, when
+            // this request happens to arrive), baked into real points right
+            // here — never stored in the buffer itself, anchored to this
+            // snapshot's own centroid so it shows up right where the live
+            // action actually is instead of somewhere fixed that might be
+            // far from it. See ClockPointsGenerator's own doc comment for
+            // why this lives here instead of as a client-side overlay.
+            double cx = 0, cy = 0, cz = 30; // float above the local point cluster
+            if (points.Length > 0)
+            {
+                double sx = 0, sy = 0, sz = 0;
+                foreach (var p in points) { sx += p.X; sy += p.Y; sz += p.Z; }
+                cx = sx / points.Length;
+                cy = sy / points.Length;
+                cz = sz / points.Length + 30;
+            }
+            var clockPoints = ClockPointsGenerator.Build(cx, cy, cz, recentPoints.LastIngestedAt);
+
+            using var buffer = new MemoryStream((points.Length + clockPoints.Count) * PointRecord.ByteSize);
+            using (var writer = new BinaryWriter(buffer, Encoding.UTF8, leaveOpen: true))
+            {
+                foreach (var p in points)
+                {
+                    writer.Write(p.X);
+                    writer.Write(p.Y);
+                    writer.Write(p.Z);
+                    writer.Write(p.R);
+                    writer.Write(p.G);
+                    writer.Write(p.B);
+                }
+                foreach (var p in clockPoints)
+                {
+                    writer.Write(p.X);
+                    writer.Write(p.Y);
+                    writer.Write(p.Z);
+                    writer.Write(p.R);
+                    writer.Write(p.G);
+                    writer.Write(p.B);
+                }
+            }
             buffer.Position = 0;
             await buffer.CopyToAsync(response.Body);
         });
