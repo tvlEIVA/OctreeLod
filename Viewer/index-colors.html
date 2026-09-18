@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>OctreeLod Viewer (Color modes)</title>
+  <style>
+    html, body, #app { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #111; }
+    #status {
+      position: absolute; top: 8px; left: 8px; z-index: 1;
+      font: 12px/1.4 monospace; color: #eee; background: rgba(0,0,0,0.5);
+      padding: 6px 10px; border-radius: 4px; pointer-events: none;
+    }
+    #colorControls {
+      position: absolute; top: 8px; right: 8px; z-index: 1;
+      font: 12px/1.4 monospace; color: #eee; background: rgba(0,0,0,0.5);
+      padding: 6px 10px; border-radius: 4px;
+      display: flex; gap: 8px; align-items: center;
+    }
+    #colorControls select { font: inherit; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="status">waiting for tileset…</div>
+  <div id="colorControls">
+    <label>Color by <select id="colorByField">
+      <option value="Z">Elevation (Z)</option>
+      <option value="Intensity">Intensity</option>
+    </select></label>
+    <label>Palette <select id="paletteField">
+      <option value="0">Blue-Green-Yellow-Red</option>
+      <option value="1">Grayscale</option>
+      <option value="2">Purple-Orange-Cream</option>
+    </select></label>
+  </div>
+  <script type="module" src="/src/main-colors.js"></script>
+</body>
+</html>
