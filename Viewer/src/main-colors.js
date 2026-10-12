@@ -3,6 +3,7 @@ import {Tile3DLayer} from '@deck.gl/geo-layers';
 import {PointCloudLayer} from '@deck.gl/layers';
 import {Tiles3DLoader} from '@loaders.gl/3d-tiles';
 import {makeBasemapLayer} from './basemap.js';
+import {makeVesselLayers, pollVessel} from './vessel.js';
 
 // Same viewer as main.js, plus two dropdowns (color-by attribute, palette)
 // that POST to Meridian's /color-mode — a shared, server-owned setting, so
@@ -80,6 +81,7 @@ function updateLayers() {
     ...(front ? [makeLayer(front, true)] : []),
   ];
   if (recentPointsLayer) layers.push(recentPointsLayer);
+  layers.push(...makeVesselLayers(recentPointsOrigin));
   deckgl.setProps({layers});
 }
 
@@ -244,3 +246,6 @@ paletteField.addEventListener('change', applyColorMode);
 
 runDoubleBuffer();
 pollRecentPoints(BASE_URL, RECENT_POINTS_POLL_MS);
+
+// Drawn once the origin is known, so the first box is not placed at [0, 0, 0].
+loadRecentPointsOrigin(BASE_URL).then(() => pollVessel(BASE_URL, updateLayers));

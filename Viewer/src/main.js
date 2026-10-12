@@ -2,6 +2,8 @@ import {Deck, MapView, COORDINATE_SYSTEM} from '@deck.gl/core';
 import {Tile3DLayer} from '@deck.gl/geo-layers';
 import {PointCloudLayer} from '@deck.gl/layers';
 import {Tiles3DLoader} from '@loaders.gl/3d-tiles';
+import {makeBasemapLayer} from './basemap.js';
+import {makeVesselLayers, pollVessel} from './vessel.js';
 
 // Point this at a running OctreeLod.Server (see OctreeLod.Server/Program.cs).
 const BASE_URL = 'http://localhost:5251';
@@ -17,7 +19,9 @@ const POLL_MS = 5000;
 const RECENT_POINTS_POLL_MS = 500;
 const RECENT_POINT_BYTES = 27; // matches OctreeLod.Core PointRecord.ByteSize (3x float64 + 3x uint8)
 const RECENT_POINT_SIZE = 4; // vs Tile3DLayer's pointSize=2, to visually flag "not yet in the tree"
-const RECENT_POINTS_ORIGIN = [0, 0, 0]; // must match Program.cs's hardcoded synthetic GeoReference
+// [lng, lat, height] the recent-points meters are offset from. Replaced by Meridian's GET /georeference
+// before the first draw, so it matches wherever the tileset root is anchored on the globe.
+let recentPointsOrigin = [0, 0, 0];
 
 // Keep 2 tilesets mounted during a swap so the old one keeps rendering while
 // the new one streams in (avoids a blank-frame flicker). Costs roughly 2x
@@ -96,9 +100,12 @@ let latestUrl = null;
 // contribution.
 let recentPointsLayer = null;
 
+const basemapLayer = makeBasemapLayer();
+
 function updateLayers() {
-  const layers = activeTilesets.map(makeLayer);
+  const layers = [...(basemapLayer ? [basemapLayer] : []), ...activeTilesets.map(makeLayer)];
   if (recentPointsLayer) layers.push(recentPointsLayer);
+  layers.push(...makeVesselLayers(recentPointsOrigin));
   deckgl.setProps({layers});
 }
 
@@ -171,8 +178,8 @@ function pollLiveServer(baseUrl, pollMs) {
 
 // Reads float64 X/Y/Z off the wire (matches the server's `double` layout)
 // but stores them as Float32Array for the GPU attribute — safe since these
-// are meters offset from RECENT_POINTS_ORIGIN, bounded by the synthetic
-// area size, so float32's precision loss is well under a millimeter.
+// are meters offset from recentPointsOrigin, bounded by the survey
+// extent, so float32's precision loss is well under a millimeter.
 function decodeRecentPoints(buffer) {
   const count = buffer.byteLength / RECENT_POINT_BYTES;
   const view = new DataView(buffer);
@@ -190,12 +197,22 @@ function decodeRecentPoints(buffer) {
   return {positions, colors, count};
 }
 
+// ?recentColor=00ffff paints the recent points one flat color, so they stand out
+// from the tileset points under them when checking that the two line up.
+const recentColorParam = new URLSearchParams(location.search).get('recentColor');
+const recentFlatColor = recentColorParam && /^[0-9a-f]{6}$/i.test(recentColorParam)
+  ? [0, 2, 4].map(i => parseInt(recentColorParam.slice(i, i + 2), 16))
+  : null;
+
 function makeRecentPointsLayer({positions, colors, count}) {
   return new PointCloudLayer({
     id: 'recent-points', // stable id — updates in place instead of reallocating GPU buffers each tick
-    data: {length: count, attributes: {getPosition: {value: positions, size: 3}, getColor: {value: colors, size: 3}}},
+    data: {length: count, attributes: recentFlatColor
+      ? {getPosition: {value: positions, size: 3}}
+      : {getPosition: {value: positions, size: 3}, getColor: {value: colors, size: 3}}},
+    ...(recentFlatColor ? {getColor: recentFlatColor} : {}),
     coordinateSystem: COORDINATE_SYSTEM.METER_OFFSETS,
-    coordinateOrigin: RECENT_POINTS_ORIGIN,
+    coordinateOrigin: recentPointsOrigin,
     pointSize: RECENT_POINT_SIZE,
   });
 }
@@ -203,15 +220,34 @@ function makeRecentPointsLayer({positions, colors, count}) {
 // No LOD needed — this is a flat, always-fully-visible buffer, not a
 // hierarchy, so no Tile3DLayer/tileset machinery involved: one fetch, one
 // GPU upload, straight to PointCloudLayer.
+// Reads where Meridian anchors the dataset's local East/North/Up frame, so the
+// recent-points layer lands exactly where the tileset does. Falls back to
+// the old [0,0,0] origin if Meridian predates /georeference.
+async function loadRecentPointsOrigin(baseUrl) {
+  try {
+    const res = await fetch(`${baseUrl}/georeference`, {cache: 'no-store'});
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const g = await res.json();
+    recentPointsOrigin = [g.longitude, g.latitude, g.height];
+  } catch (err) {
+    console.warn('GET /georeference failed, recent points stay at [0,0,0]:', err);
+  }
+}
+
 function pollRecentPoints(baseUrl, pollMs) {
   async function tick() {
     const res = await fetch(`${baseUrl}/recent-points.bin`, {cache: 'no-store'});
     recentPointsLayer = makeRecentPointsLayer(decodeRecentPoints(await res.arrayBuffer()));
     updateLayers();
   }
-  tick();
-  setInterval(tick, pollMs);
+  loadRecentPointsOrigin(baseUrl).then(() => {
+    tick();
+    setInterval(tick, pollMs);
+  });
 }
 
 pollLiveServer(BASE_URL, POLL_MS);
 pollRecentPoints(BASE_URL, RECENT_POINTS_POLL_MS);
+
+// Drawn once the origin is known, so the first box is not placed at [0, 0, 0].
+loadRecentPointsOrigin(BASE_URL).then(() => pollVessel(BASE_URL, updateLayers));
